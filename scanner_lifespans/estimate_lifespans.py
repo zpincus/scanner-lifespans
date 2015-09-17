@@ -196,23 +196,54 @@ def estimate_p_obs(ages, scores, reference_ages, reference_live, reference_dead,
         p_obses[:,i,:] = weighted_mean
     return p_obses
 
-def states_to_lifespans(states, ages):
-    lifespans = []
+def states_to_last_alive_indices(states):
+    # states.shape = num_worms, num_timepoints
     last_alive_indices = []
-    indices = numpy.arange(len(ages))
-    for state_series in states:
-        if state_series[0] == 0:
-            lifespan = -1 # well was empty / DOA
-            last_alive_i = None
+    indices = numpy.arange(states.shape[1])
+    for worm_states in states:
+        if worm_states[0] == 0:
+            i = None
         else:
-            last_alive_i = (state_series * indices).argmax()
+            i = (worm_states * indices).argmax()
+        last_alive_indices.append(i)
+    return numpy.array(last_alive_indices)
+
+def last_alive_indices_to_states(last_alive_indices, num_timepoints):
+    states = []
+    for i in last_alive_indices:
+        worm_states = numpy.zeros(num_timepoints, dtype=int)
+        if i != None:
+            worm_states[:i+1] = 1
+        states.append(worm_states)
+    return numpy.array(states, dtype=int)
+
+def last_alive_indices_to_lifespans(last_alive_indices, ages):
+    lifespans = []
+    for i in last_alive_indices:
+        if last_alive_i == None:
+            lifespan = -1 # well was empty / DOA
+        else:
             if last_alive_i < indices[-1]: # worm has died
                 lifespan = (ages[last_alive_i] + ages[last_alive_i+1]) / 2 # assume death was between last live observation and first dead observation
             else:
-                lifespan = numpy.nan # worm is still alive
+                lifespan = numpy.nan # worm was never observed to be dead
         lifespans.append(lifespan)
-        last_alive_indices.append(last_alive_i)
-    return numpy.array(lifespans), numpy.array(last_alive_indices)
+    return numpy.array(lifespans)
+
+def lifespan_to_last_alive_indices(lifespans, ages):
+    last_alive_indices = []
+    ages = numpy.asarray(ages)
+    for lifespan in lifespans:
+        if numpy.isnan(lifespan):
+            i = len(ages) - 1
+        else:
+            timepoints_alive = (lifespan > ages).sum()
+            if timepoints_alive > 0:
+                i = timepoints_alive - 1
+            else:
+                i = None
+        last_alive_indices.append(i)
+    return numpy.array(last_alive_indices, dtype=int)
 
 def lifespan_to_states(lifespans, ages):
     states = []

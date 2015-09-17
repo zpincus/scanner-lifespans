@@ -3,8 +3,8 @@ from sklearn import base
 from sklearn.externals import joblib
 import pathlib
 
-import score_wells
-import estimate_lifespans
+from . import score_wells
+from . import estimate_lifespans
 
 class ScoreWells(base.BaseEstimator, base.TransformerMixin):
     def __init__(self, cache_dir, well_names, well_mask, image_dpi, min_feature, max_feature, local_max_percentile, high_thresh, low_thresh, erode_iters):

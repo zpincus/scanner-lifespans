@@ -1,16 +1,15 @@
 import numpy
-import pickle
 import pathlib
 import re
 import datetime
 import collections
 import concurrent.futures as futures
 import freeimage
+import zplib.util as util
 
-import extract_wells
-import score_wells
-import estimate_lifespans
-#import evaluate_lifespans
+from . import extract_wells
+from . import score_wells
+from . import estimate_lifespans
 
 ROW_NAMES_384 = 'ABCDEFGHIJKLMNOP'
 COL_NAMES_384 = ['{:02d}'.format(i) for i in range(1, 25)]
@@ -40,7 +39,6 @@ HOLLY_OLD_PLATE_PARAMS = dict(
     x_names_first=True,
     exclude_names=None
 )
-
 
 HOLLY_IMAGE_SCORE_PARAMS = dict(
     image_dpi=2400,
@@ -76,7 +74,7 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
     max_workers: maximum number of image-extraction jobs to run in parallel. If None,
         then use all CPUs that the machine has. For debugging, use 1.
     """
-    out_dir = _get_dir(out_dir)
+    out_dir = util.get_dir(out_dir)
     image_sets = parse_inputs(in_dir, **name_params)
     dates = sorted(image_sets.keys())
     make_well_mask(out_dir, image_sets[dates[0]][0]) # maks mask from first image on first day -- least junk-filled
@@ -102,20 +100,17 @@ def estimate_lifespans(scored_dir, training_data):
     training_data: path to training_data.pickle file with calibration information.
     """
     scored_dir = pathlib.Path(scored_dir)
-    dates, ages, well_names, scores = aggregate_scores(scored_dir)
-    training = _load(training_data)
+    ages, well_names, scores = aggregate_scores(scored_dir)
+    training = util.load(training_data)
 
     states = estimate_lifespans.estimate_states(scores, ages, training.states, training.scores, training.ages)
-    lifespans, last_alive_i = estimate_lifespans.states_to_lifespans(states, ages)
-    #TODO: only store last alive indices, and have helper functions to generate lifespans
-    last_alive_dates = [dates[i] for i in last_alive_i]
+    last_alive_indices = estimate_lifespans.states_to_last_alive_indices(states)
+    lifespans = estimate_lifespans.last_alive_indices_to_lifespans(last_alive_indices, ages)
     lifespans_out = [(well_name, str(lifespan)) for well_name, lifespan in zip(well_names, lifespans)]
-    _dump_csv(lifespans_out, out_dir/'lifespans.csv')
-    last_out = [(well_name, date.isoformat() if ld else '') for well_name, date in zip(well_names, last_alive_dates)]
-    _dump_csv(last_out, out_dir/'last_alive.csv')
-    _dump(out_dir/'lifespans.pickle', well_names=well_names, ages=ages, states=states, lifespans=lifespans, last_alive_dates=last_alive_dates)
+    util.dump_csv(lifespans_out, out_dir/'lifespans.csv')
+    util.dump(out_dir/'lifespans.pickle', well_names=well_names, ages=ages, states=states, lifespans=lifespans, last_alive_indices=last_alive_indices)
 
-def evaluate_lifespans(scored_dir, ris_widget):
+def evaluate_lifespans(scored_dir):
     """Once well images have been scored, manually evaluate lifespans.
 
     If the lifespans have been computationally esitmated, that data will be
@@ -128,12 +123,14 @@ def evaluate_lifespans(scored_dir, ris_widget):
         the parent directory of all of the extracted and scored images.
     training_data: path to training_data.pickle file with calibration information.
     """
-
+    # only import GUI stuff here, as it can play havoc with use with other GUIs (e.g. matplotlib)
+    from . import evaluate_lifespans
     data = load_data(scored_dir)
-    if not hasattr(data, 'last_alive_dates'):
+    if not hasattr(data, 'last_alive_indices'):
         # Lifespans have not been estimated. This will allow manual annotation.
-        data.last_alive_dates = [None] * len(data.well_names)
-    evaluator = evaluate.DeathDayEvaluator(ris_widget, out_dir, data.dates, data.ages, data.last_alive_dates, data.well_names)
+        data.last_alive_indices = [None] * len(data.well_names)
+    evaluator = evaluate.DeathDayEvaluator(scored_dir, data.ages, data.last_alive_indices, data.well_names)
+    rw.show()
     return evaluator
 
 def make_training_data(scored_dir, training_data, manual_annotation_csv):
@@ -148,7 +145,7 @@ def make_training_data(scored_dir, training_data, manual_annotation_csv):
     indices_of_data_wells = {well:i for i, well in enumerate(data.well_names)}
     well_indices = [indices_of_data_wells[well] for well in csv_well_names]
     scores = data.scores[well_indices]
-    _dump(training_data, states=states, ages=ages, scores=scores)
+    util.dump(training_data, states=states, ages=ages, scores=scores)
 
 
 ## Helper functions
@@ -280,11 +277,11 @@ def extract_image_set(image_files, out_dir, date, age, plate_params, ignore_prev
             image = (image >> 8).astype(numpy.uint8)
         images.append(image)
     image_centroids, well_names, well_images = extract_wells.extract_wells(images, well_mask, **plate_params)
-    well_dir = _get_dir(out_dir / 'well_images')
+    well_dir = util.get_dir(out_dir / 'well_images')
     for well_name, well_image_set in zip(well_names, well_images):
         for i, image in enumerate(well_image_set):
             freeimage.write(image, str(well_dir/well_name)+'-{}.png'.format(i))
-    _dump(metadata, date=date, age=age, well_names=well_names, image_centroids=image_centroids)
+    util.dump(metadata, date=date, age=age, well_names=well_names, image_centroids=image_centroids)
 
 def score_image_set(out_dir, score_params, write_difference_images, ignore_previous=False):
     """Score wells for a single day's scanned images.
@@ -302,7 +299,7 @@ def score_image_set(out_dir, score_params, write_difference_images, ignore_previ
     if not ignore_previous and score_file.exists():
         return
     print('scoring images for {}'.format(str(out_dir)))
-    well_names = _load(out_dir / 'metadata.pickle').well_names
+    well_names = util.load(out_dir / 'metadata.pickle').well_names
     well_mask = freeimage.read(str(out_dir.parent / 'well_mask.png')) > 0
     well_dir = out_dir / 'well_images'
     well_images = []
@@ -312,13 +309,13 @@ def score_image_set(out_dir, score_params, write_difference_images, ignore_previ
     diff_images, well_scores = score_wells.score_wells(well_images, well_mask,
         return_difference_images=write_difference_images, **score_params)
     if write_difference_images:
-        diff_dir = _get_dir(out_dir / 'abs_diff_images')
+        diff_dir = util.get_dir(out_dir / 'abs_diff_images')
         for well_name, diff_image_set in zip(well_names, diff_images):
             for i, image in enumerate(diff_image_set):
                 freeimage.write(i, str(diff_dir/well_name)+'-{}.tif'.format(i))
-    _dump(score_file, well_names=well_names, well_scores=well_scores)
+    util.dump(score_file, well_names=well_names, well_scores=well_scores)
     scores_out = [[name, str(score)] for name, score in zip(well_names, well_scores)]
-    _dump_csv(scores_out, out_dir / 'scores.csv')
+    util.dump_csv(scores_out, out_dir / 'scores.csv')
 
 def rescore_images(extracted_dir, score_params, max_workers=None):
     """Calculate movement scores from previously-extracted well images.
@@ -354,8 +351,8 @@ def aggregate_scores(out_dir):
     well_names = None
     all_scores = {}
     for scorefile in out_dir.glob('*/scores.pickle'): # find all such files below outdir
-        scores = _load(scorefile)
-        data = _load(scorefile.parent / 'metadata.pickle')
+        scores = util.load(scorefile)
+        data = util.load(scorefile.parent / 'metadata.pickle')
         assert data.well_names == scores.well_names
         if well_names is None:
             well_names = data.well_names
@@ -371,9 +368,9 @@ def aggregate_scores(out_dir):
     data_out += [[''] + [str(a) for a in ages]]
     for well_name, score in zip(well_names, scores):
         data_out += [[well_name] + [str(s) for s in score]]
-    _dump_csv(data_out, out_dir/'scores.csv')
-    _dump(out_dir / 'scores.pickle', dates=dates, ages=ages, well_names=well_names, scores=scores)
-    return dates, ages, well_names, scores
+    util.dump_csv(data_out, out_dir/'scores.csv')
+    util.dump(out_dir / 'scores.pickle', dates=dates, ages=ages, well_names=well_names, scores=scores)
+    return ages, well_names, scores
 
 def load_data(scored_dir):
     """Load score data, and if available, lifespan data, from a processed directory.
@@ -386,73 +383,25 @@ def load_data(scored_dir):
     and if lifespan data are found, also:
         states
         lifespans
-        last_alive_dates
+        last_alive_indices
     """
     scored_dir = pathlib.Path(scored_dir)
-    data = Data()
-    scores = _load(scored_dir / 'scores.pickle')
+    data = util.Data()
+    scores = util.load(scored_dir / 'scores.pickle')
     for name in ('dates', 'ages', 'well_names', 'scores'):
         setattr(data, name, getattr(scores, name))
     lifespan_data = scored_dir / 'lifespans.pickle'
     if lifespan_data.exists():
-        lifespans = _load(lifespan_data)
+        lifespans = util.load(lifespan_data)
         assert scores.ages == lifespans.ages and scores.well_names == lifespans.well_names
-        for name in ('states', 'lifespans', 'last_alive_dates'):
+        for name in ('states', 'lifespans', 'last_alive_indices'):
             setattr(data, name, getattr(lifespans, name))
-    return data
-
-class Data:
-    def __init__(self, **kwargs):
-        """Add all keyword arguments to self.__dict__, which is to say, to
-        the namespace of the class. I.e.:
-
-        d = Data(foo=5, bar=6)
-        d.foo == 5 # True
-        d.bar > d.foo # True
-        d.baz # AttributeError
-        """
-        self.__dict__.update(kwargs)
-
-def _get_dir(path):
-    """Create a directory at path if it does not already exist. Return a
-    pathlib.Path object for that directory."""
-    path = pathlib.Path(path)
-    if not path.exists():
-        path.mkdir(parents=True)
-    return path
-
-def _dump(path, **data_dict):
-    """Dump the keyword arguments into a dictionary in a pickle file."""
-    path = pathlib.Path(path)
-    with path.open('wb') as f:
-        pickle.dump(data_dict, f)
-
-def _load(path):
-    """Load a dictionary from a pickle file into a Data object for
-    attribute-style value lookup."""
-    path = pathlib.Path(path)
-    with path.open('rb') as f:
-        return Data(**pickle.load(f))
-
-def _dump_csv(data, path):
-    """Write a list of lists to a csv file."""
-    path = pathlib.Path(path)
-    with path.open('w') as f:
-        f.write('\n'.join(','.join(row) for row in data))
-
-def _load_csv(csv):
-    """Load a csv file to a list of lists."""
-    path = pathlib.Path(path)
-    data = []
-    with path.open('w') as f:
-        for line in f:
-            data.append(line.split(','))
     return data
 
 def read_lifespan_annotation_csv(csv):
     """ Read a csv of lifespans to lists of well names and lifespans."""
     well_names, lifespans = [], []
-    csv = _load_csv(csv)
+    csv = util.load_csv(csv)
     for line in csv[1:]: # skip line zero as header
         well_names.append(line[0])
         lifespans.append(float(line[1]))

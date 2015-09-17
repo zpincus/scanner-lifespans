@@ -2,12 +2,13 @@ import warnings
 import numpy
 from scipy import ndimage
 from scipy import cluster
-from skimage import feature
+#from skimage import feature
 from zplib.scalar_stats import mcd
 from zplib.image import mask
 from zplib.image import maxima
 
-import registration
+from . import registration
+from . import match_template
 
 ## Top-level functions
 def get_well_mask(image):
@@ -50,10 +51,17 @@ def find_potential_well_centroids(image, well_mask, well_size):
     small_mask = zoom(well_mask, 1/zoom_factor, order=1, output=numpy.float32)
     small_mask = small_mask > 0.5
     small_well_size = well_size / zoom_factor
-    peaks = feature.match_template(small_image, small_mask, pad_input=True, mode='edge')
-    centroids, match_scores = maxima.find_local_maxima(peaks, min_distance=0.9*small_well_size)
-    good_matches = match_scores > 0.1 * match_scores.max()
-    return match_scores[good_matches], numpy.array(centroids)[good_matches] * zoom_factor
+    peaks = match_template.match_template(small_image, small_mask, pad_input=True, mode='edge')
+    min_distance = 0.9*small_well_size
+    centroids, match_scores = maxima.find_local_maxima(peaks, min_distance)
+    good_matches = match_scores > 0.05 * match_scores.max()
+    x, y = centroids.T
+    # excludes centroids near the edges
+    radius = small_well_size/2
+    good_centroids = ((x > radius) & (x < peaks.shape[0] - radius) &
+        (y > radius) & (y < peaks.shape[1] - radius))
+    centroid_mask = good_matches & good_centroids
+    return match_scores[centroid_mask], centroids[centroid_mask] * zoom_factor
 
 def find_well_names(match_scores, potential_centroids, well_size, x_names, y_names, exclude_names, x_names_first):
     centroids = numpy.asarray(potential_centroids)
@@ -75,9 +83,14 @@ def find_well_names(match_scores, potential_centroids, well_size, x_names, y_nam
                 well_names.append(well_name)
                 well_position = (x_pos, y_pos)
                 squared_distances = ((centroids - well_position)**2).sum(axis=1)
-                centroid_indices.append(squared_distances.argmin())
-    # assert all indices are unique. Otherwise, two well names were assigned to a single position
-    assert len(centroid_indices) == len(set(centroid_indices))
+                closest_centroid = squared_distances.argmin()
+                if numpy.sqrt(squared_distances[closest_centroid]) > well_size * .75:
+                    # could not find a good match in the vicinity of the expected position
+                    raise ValueError('Could not locate well {} (closest match at {})'.format(well_name, centroids[closest_centroid]))
+                centroid_indices.append(closest_centroid)
+    # ensure all indices are unique. Otherwise, two well names were assigned to a single position
+    if len(centroid_indices) != len(set(centroid_indices)):
+        raise ValueError('Could not find all required well positions')
     return well_names, centroids[centroid_indices]
 
 def find_grid_positions(match_scores, match_locations, well_size, num_positions):
@@ -124,8 +137,7 @@ def get_well_images(images, image_centroids, well_size):
     return well_images
 
 def downsample_image(image, max_dim=2500):
-    orig_shape = image.shape
-    largest_dim = max(orig_shape)
+    largest_dim = max(image.shape)
     if largest_dim > max_dim:
         # need to make the image smaller
         shrink_factor = max_dim / largest_dim
