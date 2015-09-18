@@ -201,18 +201,18 @@ def states_to_last_alive_indices(states):
     last_alive_indices = []
     indices = numpy.arange(states.shape[1])
     for worm_states in states:
-        if worm_states[0] == 0:
+        if worm_states[0] == 0: # worm was never observed to be alive: well empty / DOA
             i = None
-        else:
+        else: # worm was alive for one or more observations
             i = (worm_states * indices).argmax()
         last_alive_indices.append(i)
-    return numpy.array(last_alive_indices)
+    return last_alive_indices
 
 def last_alive_indices_to_states(last_alive_indices, num_timepoints):
     states = []
     for i in last_alive_indices:
         worm_states = numpy.zeros(num_timepoints, dtype=int)
-        if i != None:
+        if i != None: # worm was alive for one or more observations
             worm_states[:i+1] = 1
         states.append(worm_states)
     return numpy.array(states, dtype=int)
@@ -220,40 +220,39 @@ def last_alive_indices_to_states(last_alive_indices, num_timepoints):
 def last_alive_indices_to_lifespans(last_alive_indices, ages):
     lifespans = []
     for i in last_alive_indices:
-        if last_alive_i == None:
-            lifespan = -1 # well was empty / DOA
+        if i == None:
+            lifespan = -1 # worm was never observed to be alive: well empty / DOA
         else:
-            if last_alive_i < indices[-1]: # worm has died
-                lifespan = (ages[last_alive_i] + ages[last_alive_i+1]) / 2 # assume death was between last live observation and first dead observation
-            else:
-                lifespan = numpy.nan # worm was never observed to be dead
+            if i == len(ages) - 1: # worm was never observed to be dead
+                lifespan = numpy.nan
+            else: # worm was observed both alive and dead
+                lifespan = (ages[i] + ages[i+1]) / 2 # assume death was between last live observation and first dead observation
         lifespans.append(lifespan)
     return numpy.array(lifespans)
 
-def lifespan_to_last_alive_indices(lifespans, ages):
+def lifespans_to_last_alive_indices(lifespans, ages):
     last_alive_indices = []
     ages = numpy.asarray(ages)
     for lifespan in lifespans:
-        if numpy.isnan(lifespan):
+        if numpy.isnan(lifespan): # worm was never observed to be dead
             i = len(ages) - 1
         else:
             timepoints_alive = (lifespan > ages).sum()
-            if timepoints_alive > 0:
-                i = timepoints_alive - 1
-            else:
+            if timepoints_alive == 0: # worm was never observed to be alive: well empty / DOA
                 i = None
+            else: # worm was observed both alive and dead
+                i = timepoints_alive - 1
         last_alive_indices.append(i)
-    return numpy.array(last_alive_indices, dtype=int)
+    return last_alive_indices
 
-def lifespan_to_states(lifespans, ages):
+def lifespans_to_states(lifespans, ages):
     states = []
     ages = numpy.asarray(ages)
     for lifespan in lifespans:
-        if numpy.isnan(lifespan):
-            seq = numpy.ones(len(ages), dtype=int)
-        else:
-            seq = (ages < lifespan).astype(int) # 0 means dead
-        states.append(seq)
+        worm_states = numpy.ones(len(ages), dtype=int)
+        if not numpy.isnan(lifespan): # worm was dead for one or more observations
+            worm_states[ages > lifespan] = 0 # 0 means dead
+        states.append(worm_states)
     return numpy.array(states, dtype=int)
 
 def make_reference_score_sets(states, scores, ages):

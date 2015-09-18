@@ -55,8 +55,9 @@ def run_analysis(in_dir, out_dir, age_at_first_scan, name_params, plate_params, 
       training_data, max_workers=None):
     """Convenience function for running complete analysis. See process_image_dir()
     and estimate_lifespans() for description of the parameters."""
-    process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers)
-    estimate_lifespans(out_dir, training_data)
+    was_error = process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers)
+    if not was_error:
+        estimate_lifespans(out_dir, training_data)
 
 def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers=None):
     """Estimate lifespans from scanned plate images.
@@ -73,6 +74,8 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
         This must be a parameter dictionary suitable to pass to score_wells.score_wells()
     max_workers: maximum number of image-extraction jobs to run in parallel. If None,
         then use all CPUs that the machine has. For debugging, use 1.
+
+    Returns: whether any of the jobs caused an error.
     """
     out_dir = util.get_dir(out_dir)
     image_sets = parse_inputs(in_dir, **name_params)
@@ -90,6 +93,7 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
         if error is not None:
             print("Error processing images for date {}:".format(dates[i]))
             print(error)
+    return any(errors)
 
 def estimate_lifespans(scored_dir, training_data):
     """Once well images have been scored, estimate worm lifespans.
@@ -129,8 +133,7 @@ def evaluate_lifespans(scored_dir):
     if not hasattr(data, 'last_alive_indices'):
         # Lifespans have not been estimated. This will allow manual annotation.
         data.last_alive_indices = [None] * len(data.well_names)
-    evaluator = evaluate.DeathDayEvaluator(scored_dir, data.ages, data.last_alive_indices, data.well_names)
-    rw.show()
+    evaluator = evaluate_lifespans.DeathDayEvaluator(scored_dir, data.ages, data.last_alive_indices, data.well_names)
     return evaluator
 
 def make_training_data(scored_dir, training_data, manual_annotation_csv):
@@ -138,7 +141,7 @@ def make_training_data(scored_dir, training_data, manual_annotation_csv):
     write out the training_data file."""
     data = load_data(scored_dir)
     csv_well_names, csv_lifespans = read_lifespan_annotation_csv(manual_annotation_csv)
-    states = estimate_lifespans.lifespan_to_states(csv_lifespans, data.ages)
+    states = estimate_lifespans.lifespans_to_states(csv_lifespans, data.ages)
 
     # it could be that the wells in the CSV are only a subset of the wells in the data,
     # so find the indices in the data for just these wells.

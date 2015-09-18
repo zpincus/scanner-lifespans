@@ -16,7 +16,7 @@ class DeathDayEvaluator:
         self.rw.layer_stack_table_dock_widget.hide()
         self.rw.main_flipbook_dock_widget.hide()
         self.animator = Animator(self.rw)
-        self.max_alive_index = len(dates)-1
+        self.max_alive_index = len(ages)-1
         self.max_well_index = len(well_names)-1
         self.ages = ages
         self.last_alive_indices = last_alive_indices
@@ -36,11 +36,25 @@ class DeathDayEvaluator:
         self._add_action('right', Qt.Qt.Key_Right, lambda: self.update_last_alive(1))
         self._add_action('up', Qt.Qt.Key_Up, lambda: self.update_well(1))
         self._add_action('down', Qt.Qt.Key_Down, lambda: self.update_well(-1))
+        self.rw.show()
 
     def save_lifespans(self):
         lifespans = estimate_lifespans.last_alive_indices_to_lifespans(self.last_alive_indices, self.ages)
         lifespans_out = [(wn, str(ls)) for wn, ls in zip(self.well_names, lifespans)]
         util.dump_csv(lifespans_out, self.out_dir/'evaluated_lifespans.csv')
+
+    def save(self):
+        util.dump(self.out_dir / 'evaluations.pickle',
+            last_alive_indices=self.last_alive_indices,
+            well_index=self.well_index)
+
+    def load(self):
+        data = util.load(self.out_dir / 'evaluations.pickle')
+        self.last_alive_indices = data.last_alive_indices
+        self.well_index = data.well_index
+        self.set_well(self.well_index)
+
+    ## Helper functions
 
     def _add_action(self, name, key, function):
         action = Qt.QAction(name, self.rw)
@@ -65,8 +79,7 @@ class DeathDayEvaluator:
         self.rect_height = shape[1]
         self.set_last_alive(self.last_alive_indices[self.well_index], zoom_to=True)
         self.well = self.well_names[index]
-        self.rw.setWindowTitle('Well {} ({}/{})'.format(self.well, index, len(self.well_names)))
-        print(self.well)
+        self.rw.setWindowTitle('Well {} ({}/{})'.format(self.well, index+1, len(self.well_names)))
 
     def update_well(self, offset):
         new = self.well_index + offset
@@ -95,16 +108,6 @@ class DeathDayEvaluator:
                 new = None
         self.set_last_alive(new)
 
-    def save(self):
-        util.dump(self.out_dir / 'evaluations.pickle',
-            last_alive_indices=self.last_alive_indices,
-            well_index=self.well_index)
-
-    def load(self):
-        data = util.load(self.out_dir / 'evaluations.pickle')
-        self.last_alive_indices = data.last_alive_indices
-        self.well_index = data.well_index
-        self.set_well(self.well_index)
 
 class Animator:
     def __init__(self, ris_widget):
