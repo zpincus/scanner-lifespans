@@ -3,9 +3,9 @@ import pathlib
 import re
 import datetime
 import collections
-import concurrent.futures as futures
+from concurrent import futures
 import freeimage
-import zplib.util as util
+from zplib import util
 
 from . import extract_wells
 from . import score_wells

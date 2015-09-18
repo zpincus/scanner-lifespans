@@ -5,8 +5,8 @@ import collections
 import PyQt5.Qt as Qt
 import freeimage
 
-import zplib.util as util
-import ris_widget.ris_widget as ris_widget
+from zplib import util
+from  ris_widget import ris_widget
 
 from . import estimate_lifespans
 
