@@ -54,10 +54,10 @@ HOLLY_IMAGE_SCORE_PARAMS = dict(
 def run_analysis(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params,
       training_data, max_workers=None):
     """Convenience function for running complete analysis. See process_image_dir()
-    and estimate_lifespans() for description of the parameters."""
+    and calculate_lifespans() for description of the parameters."""
     was_error = process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers)
     if not was_error:
-        estimate_lifespans(out_dir, training_data)
+        calculate_lifespans(out_dir, training_data)
 
 def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers=None):
     """Estimate lifespans from scanned plate images.
@@ -95,7 +95,7 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
             print(error)
     return any(errors)
 
-def estimate_lifespans(scored_dir, training_data):
+def calculate_lifespans(scored_dir, training_data):
     """Once well images have been scored, estimate worm lifespans.
 
     Parameters:
@@ -138,17 +138,26 @@ def evaluate_lifespans(scored_dir):
 
 def make_training_data(scored_dir, training_data, manual_annotation_csv):
     """Given a scored directory and a file containing manually annotated lifespans,
-    write out the training_data file."""
+    write out the training_data file.
+
+    Skip all wells which were marked empty / DOA / otherwise ignore (i.e. lifespan=-1),
+    as these are likely not useful training data.
+    """
     data = load_data(scored_dir)
     csv_well_names, csv_lifespans = read_lifespan_annotation_csv(manual_annotation_csv)
-    states = estimate_lifespans.lifespans_to_states(csv_lifespans, data.ages)
+    good_well_names, good_lifespans = [], []
+    for name, lifespan in zip(csv_well_names, csv_lifespans):
+        if lifespan != -1:
+            good_well_names.append(name)
+            good_lifespans.append(lifespan)
+    states = estimate_lifespans.lifespans_to_states(good_lifespans, data.ages)
 
     # it could be that the wells in the CSV are only a subset of the wells in the data,
     # so find the indices in the data for just these wells.
     indices_of_data_wells = {well:i for i, well in enumerate(data.well_names)}
-    well_indices = [indices_of_data_wells[well] for well in csv_well_names]
-    scores = data.scores[well_indices]
-    util.dump(training_data, states=states, ages=ages, scores=scores)
+    good_well_indices = [indices_of_data_wells[well] for well in good_well_names]
+    scores = data.scores[good_well_indices]
+    util.dump(training_data, states=states, ages=data.ages, scores=scores)
 
 
 ## Helper functions
@@ -405,7 +414,7 @@ def read_lifespan_annotation_csv(csv):
     """ Read a csv of lifespans to lists of well names and lifespans."""
     well_names, lifespans = [], []
     csv = util.load_csv(csv)
-    for line in csv[1:]: # skip line zero as header
+    for line in csv:
         well_names.append(line[0])
         lifespans.append(float(line[1]))
     return well_names, lifespans
