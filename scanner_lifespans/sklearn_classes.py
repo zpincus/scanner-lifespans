@@ -35,4 +35,4 @@ class ScoreWells(base.BaseEstimator, base.TransformerMixin):
         score_wells = memory.cache(self.score_wells)
         scores = []
         for image_dir in X:
-             scores.append(self.score_wells(image_dir, self.well_names, self.well_mask, self.image_dpi, self.min_feature, self.max_feature, self.local_max_percentile, self.high_thresh, self.low_thresh, self.erode_iters)
+             scores.append(self.score_wells(image_dir, self.well_names, self.well_mask, self.image_dpi, self.min_feature, self.max_feature, self.local_max_percentile, self.high_thresh, self.low_thresh, self.erode_iters))
