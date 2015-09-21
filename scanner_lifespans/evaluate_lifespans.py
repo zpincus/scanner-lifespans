@@ -106,7 +106,7 @@ class DeathDayEvaluator:
             new = min(current+offset, self.max_alive_index)
             if new < 0:
                 new = None
-        self.set_last_alive(new)
+        self.set_last_alive(new, zoom_to=True)
 
 
 class Animator:

@@ -49,7 +49,7 @@ def calculate_difference_image(images, microns_per_pixel, fft_filter, local_max_
         diff = (image.astype(numpy.float32) - denoised[0]) / big_max
         filtered_diff = numpy.abs(fft_filter.filter(image))
         differences.append(filtered_diff)
-    diff_image = numpy.sum(differences, axis=0)
+    diff_image = numpy.mean(differences, axis=0)
     return diff_image
 
 def score_diff_image(diff_image, well_mask, high_thresh, low_thresh, erode_iters):

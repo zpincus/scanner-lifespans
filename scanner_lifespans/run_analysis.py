@@ -20,12 +20,6 @@ HOLLY_NAME_PARAMS = dict(
     date_format='%Y-%m-%d'
 )
 
-HOLLY_OLD_NAME_PARAMS = dict(
-    image_glob='*.tif',
-    date_regex=r'^[A-Z][a-z]{2}\d{1,2}',
-    date_format='%b%d'
-)
-
 HOLLY_PLATE_PARAMS = dict(
     x_names=ROW_NAMES_384,
     y_names=COL_NAMES_384,
@@ -33,19 +27,12 @@ HOLLY_PLATE_PARAMS = dict(
     exclude_names=('A23', 'A24', 'B23', 'B24')
 )
 
-HOLLY_OLD_PLATE_PARAMS = dict(
-    x_names=ROW_NAMES_384,
-    y_names=COL_NAMES_384,
-    x_names_first=True,
-    exclude_names=None
-)
-
 HOLLY_IMAGE_SCORE_PARAMS = dict(
     image_dpi=2400,
     min_feature=40, # in microns
     max_feature=400, # in microns
-    high_thresh=0.12,
-    low_thresh=0.08,
+    high_thresh=0.04,
+    low_thresh=0.02,
     erode_iters=0,
     local_max_percentile=80
 )
