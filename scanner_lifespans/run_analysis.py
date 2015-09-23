@@ -80,7 +80,9 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
         if error is not None:
             print("Error processing images for date {}:".format(dates[i]))
             print(error)
-    return any(errors)
+    was_error = any(errors)
+    if not was_error:
+        aggregate_scores(out_dir)
 
 def calculate_lifespans(scored_dir, training_data):
     """Once well images have been scored, estimate worm lifespans.
@@ -91,15 +93,16 @@ def calculate_lifespans(scored_dir, training_data):
     training_data: path to training_data.pickle file with calibration information.
     """
     scored_dir = pathlib.Path(scored_dir)
-    ages, well_names, scores = aggregate_scores(scored_dir)
+    data = load_data(scored_dir)
     training = util.load(training_data)
 
-    states = estimate_lifespans.estimate_states(scores, ages, training.states, training.scores, training.ages)
+    states = estimate_lifespans.estimate_states(data.scores, data.ages, training.states, training.scores, training.ages)
     last_alive_indices = estimate_lifespans.states_to_last_alive_indices(states)
-    lifespans = estimate_lifespans.last_alive_indices_to_lifespans(last_alive_indices, ages)
-    lifespans_out = [(well_name, str(lifespan)) for well_name, lifespan in zip(well_names, lifespans)]
+    lifespans = estimate_lifespans.last_alive_indices_to_lifespans(last_alive_indices, data.ages)
+    lifespans_out = [(well_name, str(lifespan)) for well_name, lifespan in zip(data.well_names, lifespans)]
     util.dump_csv(lifespans_out, out_dir/'lifespans.csv')
-    util.dump(out_dir/'lifespans.pickle', well_names=well_names, ages=ages, states=states, lifespans=lifespans, last_alive_indices=last_alive_indices)
+    util.dump(out_dir/'lifespans.pickle', well_names=data.well_names, ages=data.ages, states=states,
+        lifespans=lifespans, last_alive_indices=last_alive_indices)
 
 def evaluate_lifespans(scored_dir):
     """Once well images have been scored, manually evaluate lifespans.
@@ -341,6 +344,8 @@ def rescore_images(extracted_dir, score_params, max_workers=None):
         if error is not None:
             print("Error scoring images for directory {}:".format(str(out_dirs[i])))
             print(error)
+    if not any(errors):
+        aggregate_scores(extracted_dir)
 
 def aggregate_scores(out_dir):
     """Once all images have been scored, aggregate the per-image-set (i.e. per-day)
@@ -369,7 +374,6 @@ def aggregate_scores(out_dir):
         data_out += [[well_name] + [str(s) for s in score]]
     util.dump_csv(data_out, out_dir/'scores.csv')
     util.dump(out_dir / 'scores.pickle', dates=dates, ages=ages, well_names=well_names, scores=scores)
-    return ages, well_names, scores
 
 def load_data(scored_dir):
     """Load score data, and if available, lifespan data, from a processed directory.
