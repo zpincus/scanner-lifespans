@@ -107,7 +107,12 @@ def find_grid_positions(match_scores, match_locations, well_size, num_positions)
     min_loc, max_loc = match_locations.min(), match_locations.max()
     accumulator = numpy.zeros((max_loc - min_loc + 1), dtype=match_scores.dtype)
     match_locations -= min_loc
-    accumulator[match_locations] = match_scores
+    for score, loc in zip(match_scores, match_locations):
+        accumulator[loc] += score
+    # NB: above is NOT the same as accumulator[match_locations] += match_scores
+    # because if there are duplicate locations in match_locations, they'll only get
+    # counted once in this formulation, but the for-loop makes sure each gets
+    # accumulated properly.
     smoothed = ndimage.gaussian_filter1d(accumulator, well_size/5, mode='constant')
     positions, scores = maxima.find_local_maxima(smoothed, min_distance=well_size/3)
     positions = positions[:,0]
