@@ -14,7 +14,7 @@ class DeathDayEvaluator:
     def __init__(self, out_dir, ages, last_alive_indices, well_names):
         self.rw = ris_widget.RisWidget()
         self.rw.layer_table_dock_widget.hide()
-        self.rw.main_flipbook_dock_widget.hide()
+        self.rw.flipbook_dock_widget.hide()
         self.animator = Animator(self.rw)
         self.max_alive_index = len(ages)-1
         self.max_well_index = len(well_names)-1
