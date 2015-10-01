@@ -40,7 +40,7 @@ class DeathDayEvaluator:
 
     def save_lifespans(self):
         lifespans = estimate_lifespans.last_alive_indices_to_lifespans(self.last_alive_indices, self.ages)
-        lifespans_out = [(wn, str(ls)) for wn, ls in zip(self.well_names, lifespans)]
+        lifespans_out = [('well name', 'lifespan')] + [(wn, str(ls)) for wn, ls in zip(self.well_names, lifespans)]
         util.dump_csv(lifespans_out, self.out_dir/'evaluated_lifespans.csv')
 
     def save(self):

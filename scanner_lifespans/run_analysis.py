@@ -387,6 +387,8 @@ def load_data(scored_dir):
         states
         lifespans
         last_alive_indices
+    If manually-annotated lifespans from 'evaluations.pickle' are found, also:
+        eval_last_alive_indices
     """
     scored_dir = pathlib.Path(scored_dir)
     data = util.Data()
@@ -399,6 +401,10 @@ def load_data(scored_dir):
         assert scores.ages == lifespans.ages and scores.well_names == lifespans.well_names
         for name in ('states', 'lifespans', 'last_alive_indices'):
             setattr(data, name, getattr(lifespans, name))
+    eval_data = scored_dir / 'evaluations.pickle'
+    if eval_data.exists():
+        evaluated = util.load(eval_data)
+        data.eval_last_alive_indices = evaluated.last_alive_indices
     return data
 
 def read_lifespan_annotation_csv(csv):
