@@ -411,7 +411,7 @@ def read_lifespan_annotation_csv(csv):
     """ Read a csv of lifespans to lists of well names and lifespans."""
     well_names, lifespans = [], []
     csv = util.load_csv(csv)
-    for line in csv:
+    for line in csv[1:]: # skip header line
         well_names.append(line[0])
         lifespans.append(float(line[1]))
     return well_names, lifespans
