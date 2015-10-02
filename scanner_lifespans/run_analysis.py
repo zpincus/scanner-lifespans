@@ -90,18 +90,18 @@ def calculate_lifespans(scored_dir, training_data):
     Parameters:
     scored_dir: corresponds to out_dir parameter to process_image_dir() --
         the parent directory of all of the extracted and scored images.
-    training_data: path to training_data.pickle file with calibration information.
+    training_data: path to training data file with calibration information.
     """
     scored_dir = pathlib.Path(scored_dir)
     data = load_data(scored_dir)
     training = util.load(training_data)
 
-    states = estimate_lifespans.estimate_states(data.scores, data.ages, training.states, training.scores, training.ages)
+    states = estimate_lifespans.estimate_lifespans(data.scores, data.ages, training.states, training.scores, training.ages)
     last_alive_indices = estimate_lifespans.states_to_last_alive_indices(states)
     lifespans = estimate_lifespans.last_alive_indices_to_lifespans(last_alive_indices, data.ages)
     lifespans_out = [(well_name, str(lifespan)) for well_name, lifespan in zip(data.well_names, lifespans)]
-    util.dump_csv(lifespans_out, out_dir/'lifespans.csv')
-    util.dump(out_dir/'lifespans.pickle', well_names=data.well_names, ages=data.ages, states=states,
+    util.dump_csv(lifespans_out, scored_dir/'lifespans.csv')
+    util.dump(scored_dir/'lifespans.pickle', well_names=data.well_names, ages=data.ages, states=states,
         lifespans=lifespans, last_alive_indices=last_alive_indices)
 
 def evaluate_lifespans(scored_dir):
@@ -115,7 +115,6 @@ def evaluate_lifespans(scored_dir):
     Parameters:
     scored_dir: corresponds to out_dir parameter to process_image_dir() --
         the parent directory of all of the extracted and scored images.
-    training_data: path to training_data.pickle file with calibration information.
     """
     # only import GUI stuff here, as it can play havoc with use with other GUIs (e.g. matplotlib)
     from . import evaluate_lifespans
@@ -126,15 +125,25 @@ def evaluate_lifespans(scored_dir):
     evaluator = evaluate_lifespans.DeathDayEvaluator(scored_dir, data.ages, data.last_alive_indices, data.well_names)
     return evaluator
 
-def make_training_data(scored_dir, training_data, manual_annotation_csv):
-    """Given a scored directory and a file containing manually annotated lifespans,
-    write out the training_data file.
+def make_training_data(scored_dir, training_data, annotation_file=None):
+    """Given a scored directory and a pickle file of manual annotation data,
+    create a file of training data for the Hidden Markov Model for lifespan
+    estimation.
 
-    Skip all wells which were marked empty / DOA / otherwise ignore (i.e. lifespan=-1),
-    as these are likely not useful training data.
+    This function will skip all wells which were marked empty / DOA / otherwise
+    ignored in the manual annotation data, as these are not useful for training.
+
+    Parameters:
+    scored_dir: corresponds to out_dir parameter to process_image_dir() --
+        the parent directory of all of the extracted and scored images.
+    training_data: path to write training data file with calibration information.
+    annotation_file: if None (default), use 'evaluated_lifespans.csv' in the
+        scored_dir. Otherwise load a custom file path.
     """
     data = load_data(scored_dir)
-    csv_well_names, csv_lifespans = read_lifespan_annotation_csv(manual_annotation_csv)
+    if annotation_file is None:
+        annotation_file = pathlib.Path(scored_dir) / 'evaluated_lifespans.csv'
+    csv_well_names, csv_lifespans = read_lifespan_annotation_csv(annotation_file)
     good_well_names, good_lifespans = [], []
     for name, lifespan in zip(csv_well_names, csv_lifespans):
         if lifespan != -1:
@@ -308,8 +317,8 @@ def score_image_set(out_dir, score_params, write_difference_images, ignore_previ
     for well_name in well_names:
         images = [freeimage.read(str(image)) for image in sorted(well_dir.glob(well_name+'-*.png'))]
         well_images.append(images)
-    diff_images, well_scores = score_wells.score_wells(well_images, well_mask,
-        return_difference_images=write_difference_images, **score_params)
+    well_scores, diff_images = score_wells.score_wells(well_images, well_mask,
+        return_images=write_difference_images, **score_params)
     if write_difference_images:
         diff_dir = util.get_dir(out_dir / 'abs_diff_images')
         for well_name, diff_image_set in zip(well_names, diff_images):
@@ -398,7 +407,7 @@ def load_data(scored_dir):
     lifespan_data = scored_dir / 'lifespans.pickle'
     if lifespan_data.exists():
         lifespans = util.load(lifespan_data)
-        assert scores.ages == lifespans.ages and scores.well_names == lifespans.well_names
+        assert numpy.all(scores.ages == lifespans.ages) and scores.well_names == lifespans.well_names
         for name in ('states', 'lifespans', 'last_alive_indices'):
             setattr(data, name, getattr(lifespans, name))
     eval_data = scored_dir / 'evaluations.pickle'

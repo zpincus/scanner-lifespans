@@ -3,6 +3,9 @@ from sklearn import neighbors, grid_search
 
 from zplib.scalar_stats import hmm, smoothing, kde
 
+def estimate_lifespans(scores, ages, reference_states, reference_scores, reference_ages):
+    states, p_initial, p_transition = annotate_dead(scores, reference_scores[reference_states==1], reference_scores[reference_states==0])
+    return states
 
 def annotate_dead(scores, scores_live, scores_dead, max_iters=5):
     prev_states = numpy.zeros(scores.shape, dtype=numpy.uint16)
