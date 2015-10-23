@@ -1,7 +1,7 @@
 import numpy
 from scipy import ndimage
 import pathlib
-
+import functools
 from zplib.image import fast_fft
 
 MAX_WORM_WIDTH_MICRONS = 75
@@ -10,23 +10,33 @@ MICRONS_PER_INCH = 25400
 ## Top-level function
 def score_wells(well_images, well_mask, image_dpi, min_feature, max_feature, local_max_percentile,
         high_thresh, low_thresh, erode_iters, return_images):
-    microns_per_pixel = MICRONS_PER_INCH / image_dpi
-    image_shape = well_images[0][0].shape
-    enlarged_mask = ndimage.binary_dilation(well_mask, iterations=int(round(80/microns_per_pixel)))
-    fft_filter = get_fft_filter(image_shape, min_feature, max_feature, microns_per_pixel)
-    cleaned_image_sets = []
-    diff_images = []
-    well_scores = []
-    for i, images in enumerate(well_images):
-        recentered, shading_corrected = clean_images(images, microns_per_pixel, local_max_percentile)
-        diff_image = difference_image(shading_corrected, fft_filter)
-        if return_images:
-            diff_images.append(diff_image)
-        score = score_diff_image(diff_image, enlarged_mask, high_thresh, low_thresh, erode_iters)
-        well_scores.append(score)
-    return well_scores, diff_images
+    cleaned_images = clean_image_sets(well_images, local_max_percentile, image_dpi)
+    diff_images = difference_image_sets(cleaned_images, min_feature, max_feature, image_dpi)
+    if return_images:
+        diff_images = list(diff_images)
+    scores = score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters, image_dpi)
+    if not return_images:
+        diff_images = None
+    return list(scores), diff_images
 
 ## Helper functions
+def clean_image_sets(well_images, local_max_percentile, image_dpi):
+    microns_per_pixel = MICRONS_PER_INCH / image_dpi
+    for images in well_images:
+        yield clean_images(images, microns_per_pixel, local_max_percentile)
+
+def difference_image_sets(cleaned_images, min_feature, max_feature, image_dpi):
+    microns_per_pixel = MICRONS_PER_INCH / image_dpi
+    for recentered, shading_corrected in cleaned_images:
+        yield difference_image(shading_corrected, min_feature, max_feature, microns_per_pixel)
+
+def score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters, image_dpi):
+    microns_per_pixel = MICRONS_PER_INCH / image_dpi
+    enlarged_mask = ndimage.binary_dilation(well_mask, iterations=int(round(80/microns_per_pixel)))
+    for diff_image in diff_images:
+        yield score_diff_image(diff_image, enlarged_mask, high_thresh, low_thresh, erode_iters)
+
+@functools.lru_cache(maxsize=32)
 def get_fft_filter(image_shape, min_feature, max_feature, microns_per_pixel):
     fftw_hints = pathlib.Path(__file__).parent / 'fftw_hints'
     if fftw_hints.exists():
@@ -52,7 +62,8 @@ def clean_images(images, microns_per_pixel, local_max_percentile):
     shading_corrected = [r.astype(numpy.float32) / big_max for r in recentered]
     return recentered, shading_corrected
 
-def difference_image(images, fft_filter):
+def difference_image(images, min_feature, max_feature, microns_per_pixel):
+    fft_filter = get_fft_filter(images[0].shape, min_feature, max_feature, microns_per_pixel)
     differences = []
     for image in images[1:]:
         diff = image.astype(numpy.float32) - images[0]

@@ -344,7 +344,7 @@ def rescore_images(extracted_dir, score_params, max_workers=None):
         None, use all CPUs. Use 1 for debugging.
     """
     extracted_dir = pathlib.Path(extracted_dir)
-    out_dirs = [metadata.parent for metadata in extracted_dir.glob('*/metadata.pickle')]
+    out_dirs = sorted(metadata.parent for metadata in extracted_dir.glob('*/metadata.pickle'))
     runner = BackgroundRunner(max_workers)
     for out_dir in out_dirs:
         runner.submit(score_image_set, out_dir, score_params, ignore_previous=True, write_difference_images=False)
