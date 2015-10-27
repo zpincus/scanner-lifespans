@@ -3,7 +3,7 @@ import pathlib
 import re
 import datetime
 import collections
-from concurrent import futures
+
 import freeimage
 from zplib import util
 
@@ -29,12 +29,11 @@ HOLLY_PLATE_PARAMS = dict(
 
 HOLLY_IMAGE_SCORE_PARAMS = dict(
     image_dpi=2400,
-    min_feature=40, # in microns
-    max_feature=400, # in microns
-    high_thresh=0.04,
-    low_thresh=0.02,
-    erode_iters=0,
-    local_max_percentile=80
+    min_feature=50, # in microns
+    max_feature=200, # in microns
+    high_thresh=3.4,
+    low_thresh=1.9,
+    erode_iters=1
 )
 
 ## top-level functions
@@ -97,8 +96,7 @@ def calculate_lifespans(scored_dir, training_data):
     training = util.load(training_data)
 
     states = estimate_lifespans.estimate_lifespans(data.scores, data.ages, training.states, training.scores, training.ages)
-    last_alive_indices = estimate_lifespans.states_to_last_alive_indices(states)
-    lifespans = estimate_lifespans.last_alive_indices_to_lifespans(last_alive_indices, data.ages)
+    lifespans = estimate_lifespans.states_to_lifespans(states, data.ages)
     lifespans_out = [(well_name, str(lifespan)) for well_name, lifespan in zip(data.well_names, lifespans)]
     util.dump_csv(lifespans_out, scored_dir/'lifespans.csv')
     util.dump(scored_dir/'lifespans.pickle', well_names=data.well_names, ages=data.ages, states=states,
@@ -160,7 +158,6 @@ def make_training_data(scored_dir, training_data, annotation_file=None):
 
 
 ## Helper functions
-
 def parse_inputs(in_dir, image_glob, date_regex, date_format):
     """
     Find wells in a directory of scanner images, group into sets of images by date.
@@ -238,7 +235,12 @@ class BackgroundRunner:
     def wait(self):
         if not self.executor:
             return []
-        futures.wait(self.futures, return_when=futures.FIRST_EXCEPTION)
+        try:
+            futures.wait(self.futures, return_when=futures.FIRST_EXCEPTION)
+        except KeyboardInterrupt:
+            for future in self.futures:
+                future.cancel()
+            raise
         # If there was an exception, cancel all the rest of the jobs.
         # If there was no exception, can "cancel" the jobs anyway, because canceling does
         # nothing if the job is done.

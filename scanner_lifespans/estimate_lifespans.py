@@ -22,7 +22,7 @@ def annotate_dead(scores, scores_live, scores_dead, max_iters=5):
         states = numpy.array([hmm.viterbi(p_obs, p_transition, p_initial) for p_obs in p_obses])
         diffs = (states != prev_states).sum()
         prev_states = states
-        print(i, diffs)
+        #print(i, diffs)
         if diffs == 0:
             break
     return states, p_initial, p_transition
@@ -198,6 +198,11 @@ def estimate_p_obs(ages, scores, reference_ages, reference_live, reference_dead,
         weighted_mean = weighted_estimates.sum(axis=0) # shape == (num_worms, 2)
         p_obses[:,i,:] = weighted_mean
     return p_obses
+
+def states_to_lifespans(states, ages):
+    last_alive_indices = states_to_last_alive_indices(states)
+    lifespans = last_alive_indices_to_lifespans(last_alive_indices, ages)
+    return lifespans
 
 def states_to_last_alive_indices(states):
     # states.shape = num_worms, num_timepoints
