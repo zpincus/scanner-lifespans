@@ -7,8 +7,8 @@ from zplib.scalar_stats import mcd
 from zplib.image import mask
 from zplib.image import maxima
 
-from . import registration
 from . import match_template
+from . import edge_align
 
 ## Top-level functions
 def get_well_mask(image):
@@ -34,10 +34,14 @@ def extract_wells(images, well_mask, x_names, y_names, exclude_names, x_names_fi
     well_size = max(x_size, y_size)
     match_scores, potential_centroids = find_potential_well_centroids(images[0], well_mask, well_size)
     well_names, centroids = find_well_names(match_scores, potential_centroids, well_size, x_names, y_names, exclude_names, x_names_first)
-    initial_shifts = register_images(images, well_mask.shape, numpy.random.permutation(centroids)[:40])
-    image_centroids = register_wells(images, centroids, well_mask.shape, initial_shifts)
-    well_images = get_well_images(images, image_centroids, well_mask.shape)
-    return image_centroids, well_names, well_images
+    mask_shape = well_mask.shape
+    half_mask = numpy.array(mask_shape, dtype=float) / 2
+    origins = [numpy.round(centroid - half_mask).astype(int) for centroid in centroids]
+    sx, sy = mask_shape
+    sliced_images = [[image[ox:ox+sx, oy:oy+sy] for image in images] for (ox, oy) in origins] # list of len(origins) entries, each a list of len(image) entries
+    mask_bbox = edge_align.find_edges(well_mask)[:4]
+    well_images = [edge_align.align_edges(sliced, target_shape=mask_shape, target_bbox=mask_bbox) for sliced in sliced_images]
+    return well_names, well_images, centroids
 
 ## Helper functions
 def zoom(*args, **kwargs):
@@ -118,28 +122,6 @@ def find_grid_positions(match_scores, match_locations, well_size, num_positions)
     positions = positions[:,0]
     best = scores.argsort()[-num_positions:]
     return numpy.sort(positions[best]) + min_loc
-
-def register_images(images, aperture_shape, centroids):
-    shifts = []
-    for image in images[1:]:
-        shift = registration.register_images(images[0], image, centroids, aperture_shape, xtol=0.5, eps=0.1)
-        shifts.append(shift)
-    return shifts
-
-def register_wells(images, centroids, aperture_shape, shifts):
-    centroids_out = [centroids]
-    for image, shift in zip(images[1:], shifts):
-        image_centroids = registration.register_wells(images[0], image, centroids,
-        aperture_shape, initial_shift=shift, xtol=0.1, eps=0.02)
-        centroids_out.append(image_centroids)
-    return centroids_out
-
-def get_well_images(images, image_centroids, well_size):
-    well_images = []
-    for image, centroids in zip(images, image_centroids):
-        well_images.append(registration.get_wells(image, centroids, well_size))
-    well_images = list(zip(*well_images)) # instead of n lists of 384 images, make 384 lists of n images...
-    return well_images
 
 def downsample_image(image, max_dim=2500):
     largest_dim = max(image.shape)

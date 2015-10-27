@@ -10,7 +10,7 @@ MICRONS_PER_INCH = 25400
 def score_wells(well_images, well_mask, image_dpi, min_feature, max_feature, high_thresh, low_thresh, erode_iters):
     diff_images = difference_image_sets(well_images, min_feature, max_feature, image_dpi)
     scores = score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters, image_dpi)
-    return numpy.array(scores)
+    return numpy.array(list(scores))
 
 ## Helper functions
 def difference_image_sets(well_images, min_feature, max_feature, image_dpi):

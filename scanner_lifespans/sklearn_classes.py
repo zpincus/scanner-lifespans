@@ -59,7 +59,7 @@ def score_images(i, n, well_images, well_mask, states, ages, image_dpi, percenti
 
 def prep_inputs(base_dir, total_wells):
     data = run_analysis.load_data(base_dir)
-    well_mask =  numpy.array([i != None for i in data.eval_last_alive_indices])
+    well_mask = numpy.array([i != None for i in data.eval_last_alive_indices])
     wells_included = well_mask.sum()
     if total_wells < wells_included:
         mask_mask = numpy.zeros(wells_included, dtype=bool)

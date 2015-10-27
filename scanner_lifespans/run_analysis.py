@@ -3,6 +3,7 @@ import pathlib
 import re
 import datetime
 import collections
+from concurrent import futures
 
 import freeimage
 from zplib import util
@@ -46,7 +47,7 @@ def run_analysis(in_dir, out_dir, age_at_first_scan, name_params, plate_params, 
         calculate_lifespans(out_dir, training_data)
 
 def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers=None):
-    """Estimate lifespans from scanned plate images.
+    """Extract well images from scanned plate images and score worm movement.
 
     Parameters:
     in_dir: path to directory of scanned images.
@@ -97,6 +98,7 @@ def calculate_lifespans(scored_dir, training_data):
 
     states = estimate_lifespans.estimate_lifespans(data.scores, data.ages, training.states, training.scores, training.ages)
     lifespans = estimate_lifespans.states_to_lifespans(states, data.ages)
+    last_alive_indices = estimate_lifespans.states_to_last_alive_indices(states)
     lifespans_out = [(well_name, str(lifespan)) for well_name, lifespan in zip(data.well_names, lifespans)]
     util.dump_csv(lifespans_out, scored_dir/'lifespans.csv')
     util.dump(scored_dir/'lifespans.pickle', well_names=data.well_names, ages=data.ages, states=states,
@@ -240,7 +242,7 @@ class BackgroundRunner:
         except KeyboardInterrupt:
             for future in self.futures:
                 future.cancel()
-            raise
+
         # If there was an exception, cancel all the rest of the jobs.
         # If there was no exception, can "cancel" the jobs anyway, because canceling does
         # nothing if the job is done.
@@ -262,7 +264,7 @@ def process_image_set(image_files, out_dir, date, age, plate_params, score_param
     See extract_image_set() and score_image_set() for a description of the parameters.
     """
     extract_image_set(image_files, out_dir, date, age, plate_params)
-    score_image_set(out_dir, score_params, write_difference_images=False)
+    score_image_set(out_dir, score_params)
 
 def extract_image_set(image_files, out_dir, date, age, plate_params, ignore_previous=False):
     """Find wells in a set of scanner images and extract each well into a separate image
@@ -289,14 +291,14 @@ def extract_image_set(image_files, out_dir, date, age, plate_params, ignore_prev
         if image.dtype == numpy.uint16:
             image = (image >> 8).astype(numpy.uint8)
         images.append(image)
-    image_centroids, well_names, well_images = extract_wells.extract_wells(images, well_mask, **plate_params)
+    well_names, well_images, well_centroids = extract_wells.extract_wells(images, well_mask, **plate_params)
     well_dir = util.get_dir(out_dir / 'well_images')
     for well_name, well_image_set in zip(well_names, well_images):
         for i, image in enumerate(well_image_set):
             freeimage.write(image, str(well_dir/well_name)+'-{}.png'.format(i))
-    util.dump(metadata, date=date, age=age, well_names=well_names, image_centroids=image_centroids)
+    util.dump(metadata, date=date, age=age, well_names=well_names, well_centroids=well_centroids)
 
-def score_image_set(out_dir, score_params, write_difference_images, ignore_previous=False):
+def score_image_set(out_dir, score_params, ignore_previous=False):
     """Score wells for a single day's scanned images.
 
     Parameters:
@@ -304,7 +306,6 @@ def score_image_set(out_dir, score_params, write_difference_images, ignore_previ
         data will be written.
     score_params: configuration information for scoring wells for movement.
         This must be a parameter dictionary suitable to pass to score_wells.score_wells()
-    write_difference_images: if True, output the (large) motion difference images
     ignore_previous: if False, and stored results already exist, skip processing
     """
     out_dir = pathlib.Path(out_dir)
@@ -319,13 +320,7 @@ def score_image_set(out_dir, score_params, write_difference_images, ignore_previ
     for well_name in well_names:
         images = [freeimage.read(str(image)) for image in sorted(well_dir.glob(well_name+'-*.png'))]
         well_images.append(images)
-    well_scores, diff_images = score_wells.score_wells(well_images, well_mask,
-        return_images=write_difference_images, **score_params)
-    if write_difference_images:
-        diff_dir = util.get_dir(out_dir / 'abs_diff_images')
-        for well_name, diff_image_set in zip(well_names, diff_images):
-            for i, image in enumerate(diff_image_set):
-                freeimage.write(i, str(diff_dir/well_name)+'-{}.tif'.format(i))
+    well_scores = score_wells.score_wells(well_images, well_mask, **score_params)
     util.dump(score_file, well_names=well_names, well_scores=well_scores)
     scores_out = [[name, str(score)] for name, score in zip(well_names, well_scores)]
     util.dump_csv(scores_out, out_dir / 'scores.csv')
@@ -349,7 +344,7 @@ def rescore_images(extracted_dir, score_params, max_workers=None):
     out_dirs = sorted(metadata.parent for metadata in extracted_dir.glob('*/metadata.pickle'))
     runner = BackgroundRunner(max_workers)
     for out_dir in out_dirs:
-        runner.submit(score_image_set, out_dir, score_params, ignore_previous=True, write_difference_images=False)
+        runner.submit(score_image_set, out_dir, score_params, ignore_previous=True)
     errors = runner.wait()
     for i, error in enumerate(errors):
         if error is not None:
@@ -416,6 +411,7 @@ def load_data(scored_dir):
     if eval_data.exists():
         evaluated = util.load(eval_data)
         data.eval_last_alive_indices = evaluated.last_alive_indices
+        data.eval_lifespans = estimate_lifespans.last_alive_indices_to_lifespans(evaluated.last_alive_indices, data.ages)
     return data
 
 def read_lifespan_annotation_csv(csv):
