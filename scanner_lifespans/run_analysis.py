@@ -109,11 +109,11 @@ def calculate_lifespans(scored_dir, training_data):
     Parameters:
     scored_dir: corresponds to out_dir parameter to process_image_dir() --
         the parent directory of all of the extracted and scored images.
-    training_data: path to training data file with calibration information.
+    training_data: paths to one or more training data files with calibration information.
     """
     scored_dir = pathlib.Path(scored_dir)
     data = load_data(scored_dir)
-    training = util.load(training_data)
+    training = load_training_data(training_data)
 
     states = estimate_lifespans.estimate_lifespans(data.scores, data.ages, training.states, training.scores, training.ages)
     lifespans = estimate_lifespans.states_to_lifespans(states, data.ages)
@@ -372,6 +372,23 @@ def aggregate_scores(out_dir):
         data_out += [[well_name] + [str(s) for s in score]]
     util.dump_csv(data_out, out_dir/'scores.csv')
     util.dump(out_dir / 'scores.pickle', dates=dates, ages=ages, well_names=well_names, scores=scores)
+
+def load_training_data(training_data_files):
+    """Load data from one or more training data files. If multiple files are provided,
+    merge their data."""
+    states, scores, ages = [], [], []
+    if isinstance(training_data_files, (str, pathlib.Path)):
+        training_data_files = [training_data_files]
+    for training_data in training_data_files:
+        training = util.load(training_data)
+        # training.states, training.scores are shape-(n_worms, n_timepoints) arrays
+        # training.ages is n_timepoints long. We want to flatten both into lists
+        states.extend(training.states.flat)
+        scores.extend(training.scores.flat)
+        ages.extend(list(ages) * training.states.shape[0])
+    training_out = util.Data(states=numpy.array(states), scores=numpy.array(scores),
+        ages=numpy.array(ages))
+    return training_out
 
 def load_data(scored_dir):
     """Load score data, and if available, lifespan data, from a processed directory.
