@@ -118,7 +118,7 @@ def calculate_lifespans(scored_dir, training_data):
     states = estimate_lifespans.estimate_lifespans(data.scores, data.ages, training.states, training.scores, training.ages)
     lifespans = estimate_lifespans.states_to_lifespans(states, data.ages)
     last_alive_indices = estimate_lifespans.states_to_last_alive_indices(states)
-    lifespans_out = [(well_name, str(lifespan)) for well_name, lifespan in zip(data.well_names, lifespans)]
+    lifespans_out = [('well name', 'lifespan')]+[(well_name, str(lifespan)) for well_name, lifespan in zip(data.well_names, lifespans)]
     util.dump_csv(lifespans_out, scored_dir/'lifespans.csv')
     util.dump(scored_dir/'lifespans.pickle', well_names=data.well_names, ages=data.ages, states=states,
         lifespans=lifespans, last_alive_indices=last_alive_indices)
