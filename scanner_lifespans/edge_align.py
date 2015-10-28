@@ -5,24 +5,34 @@ import collections
 
 # Top-level functions
 
-def align_edges(images, target_shape=None, target_bbox=None):
-    fixed_edges = find_edges(images[0])
+def align_edges(images, origin=None, target_shape=None, target_bbox=None):
     if target_shape is None:
         shape = images[0].shape
     else:
         shape = target_shape
+
+    if origin is None:
+        origin = numpy.array([0, 0], dtype=int)
+        sliced_images = images
+    else:
+        sx, sy = shape
+        ox, oy = origin
+        sliced_images = [image[ox:ox+sx, oy:oy+sy] for image in images]
+
+    fixed_edges = find_edges(sliced_images[0])
     if target_bbox is None:
         aligned = [images[0]]
         target_bbox = fixed_edges[:4]
     else:
-        aligned = [_remap(images[0], target_shape, fixed_edges[:4], target_bbox)]
-    for image in images[1:]:
-        moving_edges = find_edges(image)
+        aligned = [_remap(images[0], origin, target_shape, fixed_edges[:4], target_bbox)]
+
+    for sliced, image in zip(sliced_images[1:], images[1:]):
+        moving_edges = find_edges(sliced)
         left = _match_edges(fixed_edges, moving_edges, 'left', window_width=10)
         right = _match_edges(fixed_edges, moving_edges, 'right', window_width=10)
         top = _match_edges(fixed_edges, moving_edges, 'top', window_width=10)
         bottom = _match_edges(fixed_edges, moving_edges, 'bottom', window_width=10)
-        aligned.append(_remap(image, shape, (left, right, top, bottom), target_bbox))
+        aligned.append(_remap(image, origin, shape, (left, right, top, bottom), target_bbox))
     return aligned
 
 WellEdges = collections.namedtuple('WellEdges', ['left', 'right', 'top', 'bottom', 'lr_profile', 'lr_gradient', 'lr_indices', 'tb_profile', 'tb_gradient', 'tb_indices'])
@@ -35,7 +45,7 @@ def find_edges(image):
 
 # Helper functions
 
-def _remap(image, shape, bbox_in, bbox_out):
+def _remap(image, origin, shape, bbox_in, bbox_out):
     shape = numpy.array(shape)
     coords = numpy.empty([2]+list(shape), numpy.float32)
     l_in, r_in, t_in, b_in = bbox_in
@@ -44,6 +54,7 @@ def _remap(image, shape, bbox_in, bbox_out):
     coords[0] = x_ind[:, numpy.newaxis]
     y_ind = _get_indices(shape[1], t_in, b_in, t_out, b_out)
     coords[1] = y_ind[numpy.newaxis, :]
+    coords += origin[:, numpy.newaxis, numpy.newaxis]
     return ndimage.map_coordinates(image, coords, order=1)
 
 def _get_indices(size, low_in, high_in, low_out, high_out):

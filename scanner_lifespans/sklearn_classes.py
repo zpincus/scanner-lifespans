@@ -27,17 +27,11 @@ def load_images(well_names, base_dir):
             date_images.append([freeimage.read(str(image)) for image in images_for_date])
     return numpy.array(well_images), well_mask
 
-def score_images(i, n, well_images, well_mask, states, ages, image_dpi, percentile, min_feature, max_feature, high_thresh, low_thresh, erode_iters):
+def score_images(i, n, well_images, well_mask, states, ages, image_dpi, min_feature, max_feature, high_thresh, low_thresh, erode_iters):
         scores = []
         for date_images in well_images:
-            if percentile is not None:
-                scaled_images = []
-                for images in date_images:
-                    scale = numpy.percentile(images[0][well_mask], percentile)
-                    scaled_images.append([i.astype(numpy.float32)/scale for i in images])
-                date_images = scaled_images
             diff_images = score_wells.difference_image_sets(date_images, min_feature, max_feature, image_dpi)
-            score_iter = score_wells.score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters, image_dpi)
+            score_iter = score_wells.score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters)
             scores.append(list(score_iter))
         scores = numpy.array(scores)
         live_scores = scores[states==1]
@@ -54,7 +48,7 @@ def score_images(i, n, well_images, well_mask, states, ages, image_dpi, percenti
             r = 0
         if not numpy.isfinite(r):
             r = 0
-        print('scoring: ', i, n, min_feature, max_feature, percentile, high_thresh, low_thresh, erode_iters, t, ks, r)
+        print('scoring: ', i, n, min_feature, max_feature, high_thresh, low_thresh, erode_iters, t, ks, r)
         return r, t, ks, live_scores, dead_scores
 
 def prep_inputs(base_dir, total_wells):

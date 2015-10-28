@@ -9,7 +9,7 @@ MICRONS_PER_INCH = 25400
 ## Top-level function
 def score_wells(well_images, well_mask, image_dpi, min_feature, max_feature, high_thresh, low_thresh, erode_iters):
     diff_images = difference_image_sets(well_images, min_feature, max_feature, image_dpi)
-    scores = score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters, image_dpi)
+    scores = score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters)
     return numpy.array(list(scores))
 
 ## Helper functions
@@ -18,11 +18,9 @@ def difference_image_sets(well_images, min_feature, max_feature, image_dpi):
     for images in well_images:
         yield difference_image(images, min_feature, max_feature, microns_per_pixel)
 
-def score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters, image_dpi):
-    microns_per_pixel = MICRONS_PER_INCH / image_dpi
-    enlarged_mask = ndimage.binary_dilation(well_mask, iterations=int(round(80/microns_per_pixel)))
+def score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters):
     for diff_image in diff_images:
-        yield score_diff_image(diff_image, enlarged_mask, high_thresh, low_thresh, erode_iters)
+        yield score_diff_image(diff_image, well_mask, high_thresh, low_thresh, erode_iters)
 
 @functools.lru_cache(maxsize=32)
 def get_fft_filter(image_shape, min_feature, max_feature, microns_per_pixel):

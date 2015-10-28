@@ -31,9 +31,9 @@ HOLLY_PLATE_PARAMS = dict(
 HOLLY_IMAGE_SCORE_PARAMS = dict(
     image_dpi=2400,
     min_feature=50, # in microns
-    max_feature=200, # in microns
-    high_thresh=3.4,
-    low_thresh=1.9,
+    max_feature=250, # in microns
+    high_thresh=5,
+    low_thresh=2.5,
     erode_iters=1
 )
 
@@ -83,6 +83,7 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
     was_error = any(errors)
     if not was_error:
         aggregate_scores(out_dir)
+    return was_error
 
 def calculate_lifespans(scored_dir, training_data):
     """Once well images have been scored, estimate worm lifespans.

@@ -37,10 +37,8 @@ def extract_wells(images, well_mask, x_names, y_names, exclude_names, x_names_fi
     mask_shape = well_mask.shape
     half_mask = numpy.array(mask_shape, dtype=float) / 2
     origins = [numpy.round(centroid - half_mask).astype(int) for centroid in centroids]
-    sx, sy = mask_shape
-    sliced_images = [[image[ox:ox+sx, oy:oy+sy] for image in images] for (ox, oy) in origins] # list of len(origins) entries, each a list of len(image) entries
     mask_bbox = edge_align.find_edges(well_mask)[:4]
-    well_images = [edge_align.align_edges(sliced, target_shape=mask_shape, target_bbox=mask_bbox) for sliced in sliced_images]
+    well_images = [edge_align.align_edges(images, origin, target_shape=mask_shape, target_bbox=mask_bbox) for origin in origins]
     return well_names, well_images, centroids
 
 ## Helper functions
