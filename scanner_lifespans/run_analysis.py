@@ -39,14 +39,14 @@ HOLLY_IMAGE_SCORE_PARAMS = dict(
 
 ## top-level functions
 def run_analysis(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params,
-      training_data, max_workers=None):
+      training_data, re_extract=False, re_score=False, max_workers=None):
     """Convenience function for running complete analysis. See process_image_dir()
     and calculate_lifespans() for description of the parameters."""
-    was_error = process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers)
+    was_error = process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, re_extract, re_score, max_workers)
     if not was_error:
         calculate_lifespans(out_dir, training_data)
 
-def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, max_workers=None):
+def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, re_extract=False, re_score=False, max_workers=None):
     """Extract well images from scanned plate images and score worm movement.
 
     Parameters:
@@ -59,6 +59,10 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
         This must be a parameter dictionary suitable to pass to extract_wells.extract_wells()
     score_params: configuration information for scoring wells for movement.
         This must be a parameter dictionary suitable to pass to score_wells.score_wells()
+    re_extract: if True, don't skip well-image extraction even if there are existing images.
+    re_score: if True, don't skip scoring well images even if there are existing scores.
+        re_extract implies re_score. If the former is True, scoring will be re-done
+        even if re_score is False.
     max_workers: maximum number of image-extraction jobs to run in parallel. If None,
         then use all CPUs that the machine has. For debugging, use 1.
 
@@ -67,14 +71,16 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
     out_dir = util.get_dir(out_dir)
     image_sets = parse_inputs(in_dir, **name_params)
     dates = sorted(image_sets.keys())
-    make_well_mask(out_dir, image_sets[dates[0]][0]) # maks mask from first image on first day -- least junk-filled
+    make_well_mask(out_dir, image_sets[dates[0]][0], ignore_previous=re_extract) # maks mask from first image on first day -- least junk-filled
     runner = BackgroundRunner(max_workers)
+    if re_extract:
+        re_score = True
     for date in dates:
         out_dir_for_date = out_dir / date.isoformat()
         age = (date - dates[0]).days + age_at_first_scan
         image_files = image_sets[date]
         runner.submit(process_image_set, image_files, out_dir_for_date, date, age,
-            plate_params, score_params)
+            plate_params, score_params, re_extract, re_score)
     errors = runner.wait()
     for i, error in enumerate(errors):
         if error is not None:
@@ -193,16 +199,17 @@ def parse_inputs(in_dir, image_glob, date_regex, date_format):
         image_files.sort()
     return image_sets
 
-def make_well_mask(out_dir, image_file):
+def make_well_mask(out_dir, image_file, ignore_previous=False):
     """Calculate and store well mask if necessary.
 
     Parameters:
     out_dir: directory where well_mask.png should exist or be created.
     image_file: path to an image to create the mask from, if it doesn't exist.
+    ignore_previous: if True, re-make mask even if it alredy exists on disk.
     """
     out_dir = pathlib.Path(out_dir)
     well_mask_f = out_dir / 'well_mask.png'
-    if not well_mask_f.exists():
+    if ignore_previous or not well_mask_f.exists():
         image = freeimage.read(image_file)
         if image.dtype == numpy.uint16:
             image = (image >> 8).astype(numpy.uint8)
@@ -258,14 +265,14 @@ class BackgroundRunner:
         self.futures = []
         return errors
 
-def process_image_set(image_files, out_dir, date, age, plate_params, score_params):
+def process_image_set(image_files, out_dir, date, age, plate_params, score_params, re_extract, re_score):
     """Do all processing for a given date's images: extract the wells to
     separate image files, and then score each well's images.
 
     See extract_image_set() and score_image_set() for a description of the parameters.
     """
-    extract_image_set(image_files, out_dir, date, age, plate_params)
-    score_image_set(out_dir, score_params)
+    extract_image_set(image_files, out_dir, date, age, plate_params, ignore_previous=re_extract)
+    score_image_set(out_dir, score_params, ignore_previous=re_score)
 
 def extract_image_set(image_files, out_dir, date, age, plate_params, ignore_previous=False):
     """Find wells in a set of scanner images and extract each well into a separate image
@@ -282,7 +289,7 @@ def extract_image_set(image_files, out_dir, date, age, plate_params, ignore_prev
     """
     out_dir = pathlib.Path(out_dir)
     metadata = out_dir / 'metadata.pickle'
-    if not ignore_previous and metadata.exists():
+    if metadata.exists() and not ignore_previous:
         return
     images = []
     print('extracting images for {}'.format(date))
@@ -311,7 +318,7 @@ def score_image_set(out_dir, score_params, ignore_previous=False):
     """
     out_dir = pathlib.Path(out_dir)
     score_file = out_dir / 'scores.pickle'
-    if not ignore_previous and score_file.exists():
+    if score_file.exists() and not ignore_previous:
         return
     print('scoring images for {}'.format(str(out_dir)))
     well_names = util.load(out_dir / 'metadata.pickle').well_names
@@ -325,34 +332,6 @@ def score_image_set(out_dir, score_params, ignore_previous=False):
     util.dump(score_file, well_names=well_names, well_scores=well_scores)
     scores_out = [[name, str(score)] for name, score in zip(well_names, well_scores)]
     util.dump_csv(scores_out, out_dir / 'scores.csv')
-
-def rescore_images(extracted_dir, score_params, max_workers=None):
-    """Calculate movement scores from previously-extracted well images.
-
-    Only necessary to call if it is desired to change the scoring parameters
-    from a previous call to process_image_dir, without re-extracting all of
-    the images.
-
-    Parameters:
-    extracted_dir: corresponds to out_dir parameter to extract_well_images() --
-        the parent directory of all of the extracted images.
-    score_params: configuration information for scoring wells for movement.
-        This must be a parameter dictionary suitable to pass to score_wells.score_wells()
-    max_workers: maximum number of well-scoring jobs to run in parallel. If
-        None, use all CPUs. Use 1 for debugging.
-    """
-    extracted_dir = pathlib.Path(extracted_dir)
-    out_dirs = sorted(metadata.parent for metadata in extracted_dir.glob('*/metadata.pickle'))
-    runner = BackgroundRunner(max_workers)
-    for out_dir in out_dirs:
-        runner.submit(score_image_set, out_dir, score_params, ignore_previous=True)
-    errors = runner.wait()
-    for i, error in enumerate(errors):
-        if error is not None:
-            print("Error scoring images for directory {}:".format(str(out_dirs[i])))
-            print(error)
-    if not any(errors):
-        aggregate_scores(extracted_dir)
 
 def aggregate_scores(out_dir):
     """Once all images have been scored, aggregate the per-image-set (i.e. per-day)
