@@ -45,6 +45,18 @@ def run_analysis(in_dir, out_dir, age_at_first_scan, name_params, plate_params, 
     was_error = process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, re_extract, re_score, max_workers)
     if not was_error:
         calculate_lifespans(out_dir, training_data)
+        data = load_data(out_dir)
+        still_alive = numpy.isnan(data.lifespans)
+        live_count = sum(still_alive)
+        if live_count > 0:
+            print('{} individual{} estimated to still be alive.'.format(live_count, 's are' if live_count > 1 else ' is'))
+            if live_count < 10:
+                print('Wells with live worms:')
+                for alive, well in zip(still_alive, data.well_names):
+                    if alive:
+                        print('  '+well)
+        else:
+            print('The last survivor was estimated to have died {} days ago.'.format(data.ages[-1] - data.lifespans.max()))
 
 def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params, re_extract=False, re_score=False, max_workers=None):
     """Extract well images from scanned plate images and score worm movement.
