@@ -5,8 +5,32 @@ import collections
 
 # Top-level functions
 
-def align_edges(images, origin=None, target_shape=None, target_bbox=None):
+def align_edges(images, approx_edge_locations=None, corner_fraction=0.3, edge_search_fraction=1, origin=None, target_shape=None, target_bbox=None):
+    '''Align well edges from a set of images to one another, and optionally force
+    aligned edges to be an a given absolute position.
+
+    Parameters:
+        images: list of images of square-ish white-on-black well images
+        approx_edge_locations: if not None, (left, right, top, bottom) tuple of
+            positions in image where the four edges will approximately be.
+        corner_fraction: if wells are rounded squares, this gives the fraction
+            of the well width that is the rounded corner, and should be ignored
+            when calculating the image gradient that is used to find the edge
+            position.
+        edge_search_fraction: fraction of the total image width away from the
+            given approx_edge_location that the actual edge will be sought.
+        origin: if not None, gives the position of the well to be aligned in
+            the image.
+        target_shape: if not None, gives the shape of the output aligned images.
+            Must be specified if origin is specified.
+        target_bbox: (left, right, top, bottom) tuple of locations where the
+            aligned edges will be placed in the output images.
+
+    Returns: list of images resampled such that well edges are in the same positions.
+    '''
     if target_shape is None:
+        if origin is not None:
+            raise ValueError('If an origin is specified, a target_shape must be as well.')
         shape = images[0].shape
     else:
         shape = target_shape
@@ -19,7 +43,7 @@ def align_edges(images, origin=None, target_shape=None, target_bbox=None):
         ox, oy = origin
         sliced_images = [image[ox:ox+sx, oy:oy+sy] for image in images]
 
-    fixed_edges = find_edges(sliced_images[0])
+    fixed_edges = find_edges(sliced_images[0], approx_edge_locations, corner_fraction, edge_search_fraction)
     if target_bbox is None:
         aligned = [images[0]]
         target_bbox = fixed_edges[:4]
@@ -27,7 +51,7 @@ def align_edges(images, origin=None, target_shape=None, target_bbox=None):
         aligned = [_remap(images[0], origin, target_shape, fixed_edges[:4], target_bbox)]
 
     for sliced, image in zip(sliced_images[1:], images[1:]):
-        moving_edges = find_edges(sliced)
+        moving_edges = find_edges(sliced, approx_edge_locations, corner_fraction, edge_search_fraction)
         left = _match_edges(fixed_edges, moving_edges, 'left', window_width=10)
         right = _match_edges(fixed_edges, moving_edges, 'right', window_width=10)
         top = _match_edges(fixed_edges, moving_edges, 'top', window_width=10)
@@ -37,11 +61,17 @@ def align_edges(images, origin=None, target_shape=None, target_bbox=None):
 
 WellEdges = collections.namedtuple('WellEdges', ['left', 'right', 'top', 'bottom', 'lr_profile', 'lr_gradient', 'lr_indices', 'tb_profile', 'tb_gradient', 'tb_indices'])
 
-def find_edges(image):
-    left, right, lr_profile, lr_gradient, lr_indices = _find_edges_1d(image, axis=0)
-    top, bottom, tb_profile, tb_gradient, tb_indices = _find_edges_1d(image, axis=1)
+def find_edges(image, approx_edge_locations=None, corner_fraction=0.3, search_fraction=1):
+    if approx_edge_locations is None:
+        right, bottom = image.shape
+        left = top = 0
+    else:
+        left, right, top, bottom = approx_edge_locations
+    lr_strip = _get_image_slice(image, left, right, corner_fraction, axis=0)
+    left, right, lr_profile, lr_gradient, lr_indices = _find_edges_1d(lr_strip, left, right, search_fraction)
+    tb_strip = _get_image_slice(image, top, bottom, corner_fraction, axis=1)
+    top, bottom, tb_profile, tb_gradient, tb_indices = _find_edges_1d(tb_strip, top, bottom, search_fraction)
     return WellEdges(left, right, top, bottom, lr_profile, lr_gradient, lr_indices, tb_profile, tb_gradient, tb_indices)
-
 
 # Helper functions
 
@@ -84,17 +114,26 @@ def _match_edges(fixed_edges, moving_edges, edge, window_width):
     offset = optimize.minimize(_score, offset_est, args=(fixed, moving, d_moving, window, indices), jac=True, method='TNC').x[0]
     return fixed_center + offset
 
-def _find_edges_1d(image, axis):
+def _get_image_slice(image, low, high, corner_fraction, axis):
     if axis != 0:
         image = image.T
-    edge_width = int(image.shape[1] / 2.5)
-    image_strip = image[:, edge_width:-edge_width]
-    profile = image_strip.mean(axis=1)
+    full_width = high-low
+    exclude = int(round(full_width * corner_fraction))
+    image_strip = image[:, low+exclude:high-exclude]
+    return image_strip
+
+def _find_edges_1d(image, low_est, high_est, search_fraction):
+    profile = image.mean(axis=1)
     indices = numpy.arange(len(profile))
     gradient = numpy.gradient(profile)
-    left = _weighted_position(gradient, indices, gradient.argmax(), 5)
-    right = _weighted_position(-gradient, indices, gradient.argmin(), 5)
-    return left, right, profile, gradient, indices
+    search_radius = int(round(search_fraction * len(profile)))
+    low_start = max(0, low_est - search_radius)
+    low_stop = min(len(profile), low_est + search_radius)
+    low = _weighted_position(gradient, indices, gradient[low_start:low_stop].argmax()+low_start, 5)
+    high_start = max(0, high_est - search_radius)
+    high_stop = min(len(profile), high_est + search_radius)
+    high = _weighted_position(-gradient, indices, gradient[high_start:high_stop].argmin()+high_start, 5)
+    return low, high, profile, gradient, indices
 
 def _weighted_position(values, indices, position, width):
     near = values[position-width:position+width+1]
@@ -103,6 +142,10 @@ def _weighted_position(values, indices, position, width):
     return (near * near_i).sum()
 
 def _score(offset, fixed, moving, d_moving, window, indices):
+    '''score function is sum((fixed[i] - moving[i+offset])**2). Return score and
+    d_score/d_offset for a given offset and window (which defines the set of
+    i that the score is computed over).
+    '''
     diff = (fixed[window] - numpy.interp(window + offset, indices, moving))
     score = diff**2
     der = -2 * diff * numpy.interp(window + offset, indices, d_moving)
