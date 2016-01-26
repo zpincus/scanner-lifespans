@@ -37,6 +37,25 @@ HOLLY_IMAGE_SCORE_PARAMS = dict(
     erode_iters=1
 )
 
+HOLLY_IMAGE_SCORE_PARAMS_OPT_KS = dict(
+    image_dpi=2400,
+    min_feature=40, # in microns
+    max_feature=200, # in microns
+    high_thresh=8,
+    low_thresh=2,
+    erode_iters=1
+)
+
+HOLLY_IMAGE_SCORE_PARAMS_OPT_T = dict(
+    image_dpi=2400,
+    min_feature=None, # in microns
+    max_feature=200, # in microns
+    high_thresh=8,
+    low_thresh=4.5,
+    erode_iters=1
+)
+
+
 ## top-level functions
 def run_analysis(in_dir, out_dir, age_at_first_scan, name_params, plate_params, score_params,
       training_data, re_extract=False, re_score=False, max_workers=None):
@@ -144,13 +163,37 @@ def evaluate_lifespans(scored_dir):
     evaluator = evaluate_lifespans.DeathDayEvaluator(scored_dir, data.ages, data.last_alive_indices, data.well_names)
     return evaluator
 
+def evaluate_statuses(extracted_dir):
+    """Once well images have been extracted, manually count the worms/well.
+
+    Parameters:
+    extracted_dir: corresponds to out_dir parameter to process_image_dir() --
+        the parent directory of all of the extracted images.
+    """
+    # only import GUI stuff here, as it can play havoc with use with other GUIs (e.g. matplotlib)
+    from . import evaluate_lifespans
+    data = load_data(extracted_dir)
+    if hasattr(data, 'eval_last_alive_indices'):
+        # Lifespans have been manually evaluated. Only look at wells with index==None
+        well_names = [wn for wn, lai in zip(data.well_names, data.eval_last_alive_indices) if lai == None]
+        no_worms_i = evaluate_lifespans.DOAEvaluator.status_codes.index('No worms')
+        statuses = [no_worms_i] * len(well_names)
+    else:
+        well_names = data.well_names
+        statuses = None
+    evaluator = evaluate_lifespans.DOAEvaluator(scored_dir, data.dates[0].isoformat(), well_names, statuses)
+    return evaluator
+
+
 def make_training_data(scored_dir, training_data, annotation_file=None):
     """Given a scored directory and a pickle file of manual annotation data,
     create a file of training data for the Hidden Markov Model for lifespan
     estimation.
 
-    This function will skip all wells which were marked empty / DOA / otherwise
-    ignored in the manual annotation data, as these are not useful for training.
+    If manually provided well-status information is present, this function will
+    skip empty wells and those with multiple worms. If no status information is
+    available, this function will skip all wells which were ignored in the
+    manual annotation data (empty / DOA / multiple worms).
 
     Parameters:
     scored_dir: corresponds to out_dir parameter to process_image_dir() --
@@ -164,8 +207,16 @@ def make_training_data(scored_dir, training_data, annotation_file=None):
         annotation_file = pathlib.Path(scored_dir) / 'evaluated_lifespans.csv'
     csv_well_names, csv_lifespans = read_lifespan_annotation_csv(annotation_file)
     good_well_names, good_lifespans = [], []
+    if hasattr(data, 'statuses'):
+        statuses = dict(zip(data.well_names, data.eval_well_statuses))
+    else:
+        statuses = {}
     for name, lifespan in zip(csv_well_names, csv_lifespans):
-        if lifespan != -1:
+        # If statuses are present, include DOA worms and living worms
+        # in the training data. Exclude empty and  multi-worm wells.
+        # If statuses are not present, exclude all wells with '-1' lifespans, which
+        # refers to any of empty/DOA/multi-worm states.
+        if (name in statuses and statuses[name] == 'DOA') or lifespan != -1 :
             good_well_names.append(name)
             good_lifespans.append(lifespan)
     states = estimate_lifespans.lifespans_to_states(good_lifespans, data.ages)
@@ -304,7 +355,7 @@ def extract_image_set(image_files, out_dir, date, age, plate_params, ignore_prev
     if metadata.exists() and not ignore_previous:
         return
     images = []
-    print('extracting images for {}'.format(date))
+    print('extracting images for {}'.format(out_dir))
     well_mask = freeimage.read(str(out_dir.parent / 'well_mask.png')) > 0
     for image_file in image_files:
         image = freeimage.read(image_file)
@@ -332,7 +383,7 @@ def score_image_set(out_dir, score_params, ignore_previous=False):
     score_file = out_dir / 'scores.pickle'
     if score_file.exists() and not ignore_previous:
         return
-    print('scoring images for {}'.format(str(out_dir)))
+    print('scoring images for {}'.format(out_dir))
     well_names = util.load(out_dir / 'metadata.pickle').well_names
     well_mask = freeimage.read(str(out_dir.parent / 'well_mask.png')) > 0
     well_dir = out_dir / 'well_images'
@@ -402,6 +453,8 @@ def load_data(scored_dir):
         states
         lifespans
         last_alive_indices
+    If manually-annotated well-statuses from 'statuses.pickle' are found, also:
+        eval_well_statuses
     If manually-annotated lifespans from 'evaluations.pickle' are found, also:
         eval_last_alive_indices
     """
@@ -421,6 +474,10 @@ def load_data(scored_dir):
         evaluated = util.load(eval_data)
         data.eval_last_alive_indices = evaluated.last_alive_indices
         data.eval_lifespans = estimate_lifespans.last_alive_indices_to_lifespans(evaluated.last_alive_indices, data.ages)
+    status_data = scored_dir / 'statuses.pickle'
+    if status_data.exists():
+        statuses = util.load(status_data)
+        data.eval_well_statuses = statuses.statuses
     return data
 
 def read_lifespan_annotation_csv(csv):

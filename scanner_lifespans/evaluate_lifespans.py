@@ -13,8 +13,9 @@ from . import estimate_lifespans
 class DeathDayEvaluator:
     def __init__(self, out_dir, ages, last_alive_indices, well_names):
         self.rw = ris_widget.RisWidget()
-        self.rw.layer_table_dock_widget.hide()
-        self.rw.flipbook_dock_widget.hide()
+        self.rw.qt_object.layer_table_dock_widget.hide()
+        self.rw.qt_object.flipbook_dock_widget.hide()
+        self.rw.qt_object.histogram_dock_widget.hide()
         self.animator = Animator(self.rw)
         self.max_alive_index = len(ages)-1
         self.max_well_index = len(well_names)-1
@@ -39,15 +40,15 @@ class DeathDayEvaluator:
         self.rw.show()
 
     def save_lifespans(self):
-        self.save()
+        util.dump(self.out_dir / 'evaluations.pickle',
+            last_alive_indices=self.last_alive_indices,
+            well_index=self.well_index)
         lifespans = estimate_lifespans.last_alive_indices_to_lifespans(self.last_alive_indices, self.ages)
         lifespans_out = [('well name', 'lifespan')] + [(wn, str(ls)) for wn, ls in zip(self.well_names, lifespans)]
         util.dump_csv(lifespans_out, self.out_dir/'evaluated_lifespans.csv')
 
     def save(self):
-        util.dump(self.out_dir / 'evaluations.pickle',
-            last_alive_indices=self.last_alive_indices,
-            well_index=self.well_index)
+        self.save_lifespans()
 
     def load(self):
         data = util.load(self.out_dir / 'evaluations.pickle')
@@ -58,9 +59,9 @@ class DeathDayEvaluator:
     ## Helper functions
 
     def _add_action(self, name, key, function):
-        action = Qt.QAction(name, self.rw)
+        action = Qt.QAction(name, self.rw.qt_object)
         action.setShortcut(key)
-        self.rw.addAction(action)
+        self.rw.qt_object.addAction(action)
         action.triggered.connect(function)
         self.actions.append(action)
 
@@ -68,7 +69,7 @@ class DeathDayEvaluator:
         self.animator.stop()
         self.rw.main_scene.removeItem(self.rect)
         for action in self.actions:
-            self.rw.removeAction(action)
+            self.rw.qt_object.removeAction(action)
 
     def set_well(self, index):
         self.well_index = index
@@ -80,7 +81,7 @@ class DeathDayEvaluator:
         self.rect_height = shape[1]
         self.set_last_alive(self.last_alive_indices[self.well_index], zoom_to=True)
         self.well = self.well_names[index]
-        self.rw.setWindowTitle('Well {} ({}/{})'.format(self.well, index+1, len(self.well_names)))
+        self.rw.qt_object.setWindowTitle('Well {} ({}/{})'.format(self.well, index+1, len(self.well_names)))
 
     def update_well(self, offset):
         new = self.well_index + offset
@@ -110,6 +111,82 @@ class DeathDayEvaluator:
         self.set_last_alive(new, zoom_to=True)
 
 
+class DOAEvaluator:
+    status_codes = ['One worm', 'No worms', 'Many worms', 'DOA']
+    def __init__(self, out_dir, date_for_images, well_names, statuses=None):
+        self.rw = ris_widget.RisWidget()
+        self.rw.qt_object.layer_table_dock_widget.hide()
+        self.rw.qt_object.flipbook_dock_widget.hide()
+        self.rw.qt_object.histogram_dock_widget.hide()
+        self.animator = Animator(self.rw)
+        self.out_dir = pathlib.Path(out_dir)
+        self.well_names = well_names
+        self.max_well_index = len(well_names)-1
+        if statuses is None:
+            self.statuses = [0] * len(well_names)
+        else:
+            assert(len(statuses) == len(well_names))
+            self.statuses = statuses
+        self.date_dir = self.out_dir / date_for_images
+        self.set_well(0)
+        self.actions = []
+        self._add_action('left', Qt.Qt.Key_Left, lambda: self.update_status(-1))
+        self._add_action('right', Qt.Qt.Key_Right, lambda: self.update_status(1))
+        self._add_action('up', Qt.Qt.Key_Up, lambda: self.update_well(1))
+        self._add_action('down', Qt.Qt.Key_Down, lambda: self.update_well(-1))
+        self.rw.show()
+
+    def save_status(self):
+        util.dump(self.out_dir / 'statuses.pickle',
+            statuses=self.statuses,
+            well_index=self.well_index)
+        status_out = [('well name', 'status')] + [(wn, self.status_codes[i]) for wn, i in zip(self.well_names, self.statuses)]
+        util.dump_csv(status_out, self.out_dir/'evaluated_statuses.csv')
+
+    def save(self):
+        self.save_status()
+
+    def load(self):
+        data = util.load(self.out_dir / 'statuses.pickle')
+        self.statuses = data.statuses
+        self.well_index = data.well_index
+        self.set_well(self.well_index)
+
+    ## Helper functions
+
+    def _add_action(self, name, key, function):
+        action = Qt.QAction(name, self.rw.qt_object)
+        action.setShortcut(key)
+        self.rw.qt_object.addAction(action)
+        action.triggered.connect(function)
+        self.actions.append(action)
+
+    def stop(self):
+        self.animator.stop()
+        for action in self.actions:
+            self.rw.qt_object.removeAction(action)
+
+    def set_well(self, index):
+        self.well_index = index
+        well_name = self.well_names[index]
+        images = [freeimage.read(str(image)) for image in sorted(self.date_dir.glob('well_images/{}-*.png'.format(well_name)))]
+        self.animator.start(images)
+        self.well = self.well_names[index]
+        self.set_status(self.statuses[self.well_index])
+
+    def update_well(self, offset):
+        new = self.well_index + offset
+        self.set_well(min(max(0, new), self.max_well_index))
+
+    def set_status(self, status_index):
+        self.statuses[self.well_index] = status_index
+        self.rw.qt_object.setWindowTitle('Well {}: {} ({}/{})'.format(self.well, self.status_codes[status_index], self.well_index+1, len(self.well_names)))
+
+    def update_status(self, offset):
+        current = self.statuses[self.well_index]
+        self.set_status((current + offset)%len(self.status_codes))
+
+
 class Animator:
     def __init__(self, ris_widget):
         self.rw = ris_widget
@@ -119,6 +196,7 @@ class Animator:
     def start(self, images, fps=5):
         self.timer.stop()
         self.images = images
+        assert len(images) > 0
         self.i = 0
         self.timer.setInterval(int(1000 * 1/fps))
         self.timer.start()
