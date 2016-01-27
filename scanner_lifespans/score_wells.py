@@ -7,12 +7,22 @@ from zplib.image import fast_fft
 MICRONS_PER_INCH = 25400
 
 ## Top-level function
-def score_wells(well_images, well_mask, image_dpi, min_feature, max_feature, high_thresh, low_thresh, erode_iters):
+def score_wells(well_images, well_mask, image_dpi, min_feature, max_feature, high_thresh, low_thresh, erode_iters, rescale=False):
+    if rescale:
+        well_images = rescale_images(well_images, well_mask)
     diff_images = difference_image_sets(well_images, min_feature, max_feature, image_dpi)
     scores = score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters)
     return numpy.array(list(scores))
 
 ## Helper functions
+def rescale_images(well_images, well_mask):
+    means = []
+    for images in well_images:
+        for image in images:
+            means.append(image[well_mask].mean())
+    factor = 128 / numpy.median(means)
+    return [[(image.astype(numpy.float32)*factor).astype(numpy.uint8) for image in images] for images in well_images]
+
 def difference_image_sets(well_images, min_feature, max_feature, image_dpi):
     microns_per_pixel = MICRONS_PER_INCH / image_dpi
     for images in well_images:
@@ -48,8 +58,11 @@ def score_diff_image(diff_image, well_mask, high_thresh, low_thresh, erode_iters
         eroded = ndimage.binary_erosion(mask, iterations=erode_iters)
     else:
         eroded = mask
-    loose_mask = diff_image > low_thresh
-    mask = ndimage.binary_dilation(eroded, mask=loose_mask, iterations=-1)
+    if low_thresh is not None:
+        loose_mask = diff_image > low_thresh
+        mask = ndimage.binary_dilation(eroded, mask=loose_mask, iterations=-1)
+    else:
+        mask = eroded
     mask = mask & well_mask
-    score = diff_image[mask].mean() if numpy.any(mask) else low_thresh
+    score = diff_image[mask].mean() if numpy.any(mask) else 0
     return score
