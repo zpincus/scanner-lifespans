@@ -9,7 +9,10 @@ MICRONS_PER_INCH = 25400
 ## Top-level function
 def score_wells(well_images, well_mask, image_dpi, min_feature, max_feature, high_thresh, low_thresh, erode_iters, rescale=False):
     if rescale:
-        well_images = rescale_images(well_images, well_mask)
+        if rescale == 'each':
+            well_images = rescale_each_image(well_images, well_mask)
+        else:
+            well_images = rescale_images(well_images, well_mask)
     diff_images = difference_image_sets(well_images, min_feature, max_feature, image_dpi)
     scores = score_image_sets(diff_images, well_mask, high_thresh, low_thresh, erode_iters)
     return numpy.array(list(scores))
@@ -21,7 +24,17 @@ def rescale_images(well_images, well_mask):
         for image in images:
             means.append(image[well_mask].mean())
     factor = 128 / numpy.median(means)
-    return [[(image.astype(numpy.float32)*factor).astype(numpy.uint8) for image in images] for images in well_images]
+    return [[image.astype(numpy.float32)*factor for image in images] for images in well_images]
+
+def rescale_each_image(well_images, well_mask):
+    well_images_out = []
+    for images in well_images:
+        images_out = []
+        for image in images:
+            factor = 128 / image[well_mask].mean()
+            images_out.append(image.astype(numpy.float32)*factor)
+        well_images_out.append(images_out)
+    return images_out
 
 def difference_image_sets(well_images, min_feature, max_feature, image_dpi):
     microns_per_pixel = MICRONS_PER_INCH / image_dpi

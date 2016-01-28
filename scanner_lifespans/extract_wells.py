@@ -32,17 +32,30 @@ def extract_wells(images, well_mask, x_names, y_names, exclude_names, x_names_fi
     x_size = x.stop-x.start
     y_size = y.stop-y.start
     well_size = max(x_size, y_size)
-    match_scores, potential_centroids = find_potential_well_centroids(images[0], well_mask, well_size)
-    well_names, centroids = find_well_names(match_scores, potential_centroids, well_size, x_names, y_names, exclude_names, x_names_first)
     mask_shape = well_mask.shape
     half_mask = numpy.array(mask_shape, dtype=float) / 2
-    origins = [numpy.round(centroid - half_mask).astype(int) for centroid in centroids]
+    all_well_names = []
+    all_centroids = []
+    all_origins = []
+    for image in images:
+        match_scores, potential_centroids = find_potential_well_centroids(image, well_mask, well_size)
+        well_names, centroids = find_well_names(match_scores, potential_centroids, well_size, x_names, y_names, exclude_names, x_names_first)
+        all_well_names.append(well_names)
+        all_centroids.append(centroids)
+        origins = [numpy.round(centroid - half_mask).astype(int) for centroid in centroids]
+        all_origins.append(origins)
+    for well_names in all_well_names[1:]:
+        if well_names != all_well_names[0]:
+            raise RuntimeError('Could not identify same wells in each image')
+    # all_origins is a list of len(images) containing the origins of each well in each image.
+    # Transform it to a list of len(well_names) containing the origins in each image
+    all_origins = zip(*all_origins)
     mask_bbox = edge_align.find_edges(well_mask)[:4]
     well_images = [edge_align.align_edges(images, approx_edge_locations=mask_bbox,
-        corner_fraction=0.3, edge_search_fraction=.15, origin=origin,
+        corner_fraction=0.3, edge_search_fraction=.15, origins=origins,
         target_shape=mask_shape, target_bbox=mask_bbox)
-        for origin in origins]
-    return well_names, well_images, centroids
+        for origins in all_origins]
+    return well_names, well_images, all_centroids
 
 ## Helper functions
 def zoom(*args, **kwargs):

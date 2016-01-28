@@ -5,7 +5,7 @@ import collections
 
 # Top-level functions
 
-def align_edges(images, approx_edge_locations=None, corner_fraction=0.3, edge_search_fraction=1, origin=None, target_shape=None, target_bbox=None):
+def align_edges(images, approx_edge_locations=None, corner_fraction=0.3, edge_search_fraction=1, origins=None, target_shape=None, target_bbox=None):
     '''Align well edges from a set of images to one another, and optionally force
     aligned edges to be an a given absolute position.
 
@@ -19,8 +19,8 @@ def align_edges(images, approx_edge_locations=None, corner_fraction=0.3, edge_se
             position.
         edge_search_fraction: fraction of the total image width away from the
             given approx_edge_location that the actual edge will be sought.
-        origin: if not None, gives the position of the well to be aligned in
-            the image.
+        origins: if not None, a list of len(images) that for each image provides
+            the x,y position of the well to be aligned in that image.
         target_shape: if not None, gives the shape of the output aligned images.
             Must be specified if origin is specified.
         target_bbox: (left, right, top, bottom) tuple of locations where the
@@ -35,22 +35,23 @@ def align_edges(images, approx_edge_locations=None, corner_fraction=0.3, edge_se
     else:
         shape = target_shape
 
-    if origin is None:
-        origin = numpy.array([0, 0], dtype=int)
+    if origins is None:
+        origins = [numpy.array([0, 0], dtype=int)] * len(images)
         sliced_images = images
     else:
         sx, sy = shape
-        ox, oy = origin
-        sliced_images = [image[ox:ox+sx, oy:oy+sy] for image in images]
+        sliced_images = []
+        for image, (ox, oy) in zip(images, origins):
+            sliced_images.append(image[ox:ox+sx, oy:oy+sy])
 
     fixed_edges = find_edges(sliced_images[0], approx_edge_locations, corner_fraction, edge_search_fraction)
     if target_bbox is None:
         aligned = [images[0]]
         target_bbox = fixed_edges[:4]
     else:
-        aligned = [_remap(images[0], origin, target_shape, fixed_edges[:4], target_bbox)]
+        aligned = [_remap(images[0], origins[0], target_shape, fixed_edges[:4], target_bbox)]
 
-    for sliced, image in zip(sliced_images[1:], images[1:]):
+    for sliced, image, origin in zip(sliced_images[1:], images[1:], origins[1:]):
         moving_edges = find_edges(sliced, approx_edge_locations, corner_fraction, edge_search_fraction)
         left = _match_edges(fixed_edges, moving_edges, 'left', window_width=10)
         right = _match_edges(fixed_edges, moving_edges, 'right', window_width=10)
