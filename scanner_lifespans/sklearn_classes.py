@@ -25,7 +25,11 @@ def load_images(well_names, base_dir, rescale):
         for date_dir, images_for_date in itertools.groupby(all_images, lambda path: path.parent.parent):
             date_images.append([freeimage.read(str(image)) for image in images_for_date])
         if rescale:
-            date_images = score_wells.rescale_images(date_images, well_mask)
+            if rescale == 'each':
+                date_images = score_wells.rescale_each_image(date_images, well_mask)
+            else:
+                date_images = score_wells.rescale_images(date_images, well_mask)
+
         well_images.append(date_images)
     return numpy.array(well_images), well_mask
 
@@ -52,13 +56,13 @@ def compute_lifespans(ref_lifespans, image_dir_results, workers):
     dir_lifespans = [estimate_lifespans.cleanup_lifespans(estimate_lifespans.states_to_lifespans(states, ages), ages)
         for states, ages in zip(dir_states, dir_ages)]
     evaluator = joblib.Parallel(n_jobs=workers, pre_dispatch='all', batch_size=1, verbose=10 if workers > 1 else 0)
-    grid_lifespans_est = evaluator(joblib.delayed(compute_lifespans_for_dirs)(dir_scores, dir_states, dir_ages, lifespan_estimator)
+    grid_lifespans_est = evaluator(joblib.delayed(compute_lifespans_for_dirs)(dir_scores, dir_states, dir_ages, dir_lifespans, lifespan_estimator)
         for dir_scores in zip(*dir_grid_scores))
     # dir_lifespans: list of len(image_dir_results) containing list of true lifespans for each animal in the image_dir
     # grid_lifespans_est: list of len(grid) containing lists of len(image_dir_results) containing list of estimated lifespans for each animal
     return dir_lifespans, grid_lifespans_est
 
-def compute_lifespans_for_dirs(dir_scores, dir_states, dir_ages, lifespan_estimator):
+def compute_lifespans_for_dirs(dir_scores, dir_states, dir_ages, dir_lifespans, lifespan_estimator):
     all_ages = []
     all_scores = []
     all_states = []
@@ -75,8 +79,13 @@ def compute_lifespans_for_dirs(dir_scores, dir_states, dir_ages, lifespan_estima
     scores_dead = all_scores[all_states==0]
     could_clean = cleanup_scores(scores_live, scores_dead)
     if not could_clean:
-        # achieved perfect separation... no need for HMM
-        dir_lifespans_est = dir_lifespans
+        # scores_live are all identical as are scores_dead
+        if scores_live[0] != scores_dead[0]:
+            #achieved perfect separation. no need for HMM
+            dir_lifespans_est = dir_lifespans
+        else:
+            # all scores identical. that's useless
+            dir_lifespans_est = [numpy.zeros_like(lifespans) for lifespans in dir_lifespans]
     else:
         obs_estimator = estimate_lifespans.hmm.ObservationProbabilityEstimator([scores_dead, scores_live])
         dir_lifespans_est = []
@@ -93,7 +102,6 @@ def compute_lifespans_for_dirs(dir_scores, dir_states, dir_ages, lifespan_estima
 def cleanup_scores(scores_live, scores_dead):
     if numpy.all(scores_dead == scores_dead[0]):
         # problem if all dead scores are the same. Add some artificial jitter
-        live_scores = scores_live[all_states == 0]
         if numpy.all(scores_live == scores_live[0]):
             return False
         min_live = scores_live[scores_live > scores_dead[0]].min()
@@ -135,7 +143,7 @@ def test_grid(workers, base_dirs, total_wells, image_dpi, grid, ref_lifespans, r
         (param_set['low_thresh'] is None or param_set['high_thresh'] >= param_set['low_thresh']) and
         (param_set['min_feature'] is None or param_set['max_feature'] > param_set['min_feature'])]
     evaluator = joblib.Parallel(n_jobs=dir_workers, pre_dispatch='all', batch_size=1, verbose=10 if dir_workers > 1 else 0)
-    image_dir_results = evaluator(joblib.delayed(grid_score_image_dir)(base_dir, wells_per_dir, image_dpi, grid, rescale, grid_workers, seed=i)
+    image_dir_results = evaluator(joblib.delayed(grid_score_image_dir)(base_dir, wells_per_dir, image_dpi, good_params, rescale, grid_workers, seed=i)
         for i, base_dir in enumerate(base_dirs))
     dir_lifespans, grid_lifespans_est = compute_lifespans(ref_lifespans, image_dir_results, workers)
     return parse_scores(dir_lifespans, grid_lifespans_est, good_params)

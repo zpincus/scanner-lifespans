@@ -34,7 +34,7 @@ def rescale_each_image(well_images, well_mask):
             factor = 128 / image[well_mask].mean()
             images_out.append(image.astype(numpy.float32)*factor)
         well_images_out.append(images_out)
-    return images_out
+    return well_images_out
 
 def difference_image_sets(well_images, min_feature, max_feature, image_dpi):
     microns_per_pixel = MICRONS_PER_INCH / image_dpi
