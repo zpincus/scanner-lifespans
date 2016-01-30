@@ -45,7 +45,7 @@ def grid_score_image_dir(base_dir, total_wells, image_dpi, grid, rescale, worker
     numpy.random.seed(seed)
     well_names, states, ages = prep_inputs(base_dir, total_wells)
     well_images, well_mask = load_images(well_names, base_dir, rescale)
-    evaluator = joblib.Parallel(n_jobs=workers, pre_dispatch='all', batch_size=1, verbose=10)
+    evaluator = joblib.Parallel(n_jobs=workers, pre_dispatch='all', batch_size=1, verbose=20)
     grid_scores = evaluator(joblib.delayed(score_images)(well_images, well_mask, image_dpi, **param_set)
         for param_set in grid)
     return grid_scores, states, ages
@@ -55,7 +55,7 @@ def compute_lifespans(ref_lifespans, image_dir_results, workers):
     dir_grid_scores, dir_states, dir_ages = zip(*image_dir_results)
     dir_lifespans = [estimate_lifespans.cleanup_lifespans(estimate_lifespans.states_to_lifespans(states, ages), ages)
         for states, ages in zip(dir_states, dir_ages)]
-    evaluator = joblib.Parallel(n_jobs=workers, pre_dispatch='all', batch_size=1, verbose=10 if workers > 1 else 0)
+    evaluator = joblib.Parallel(n_jobs=workers, pre_dispatch='all', batch_size=1, verbose=20)
     grid_lifespans_est = evaluator(joblib.delayed(compute_lifespans_for_dirs)(dir_scores, dir_states, dir_ages, dir_lifespans, lifespan_estimator)
         for dir_scores in zip(*dir_grid_scores))
     # dir_lifespans: list of len(image_dir_results) containing list of true lifespans for each animal in the image_dir
@@ -142,7 +142,7 @@ def test_grid(workers, base_dirs, total_wells, image_dpi, grid, ref_lifespans, r
     good_params = [param_set for param_set in grid if
         (param_set['low_thresh'] is None or param_set['high_thresh'] >= param_set['low_thresh']) and
         (param_set['min_feature'] is None or param_set['max_feature'] > param_set['min_feature'])]
-    evaluator = joblib.Parallel(n_jobs=dir_workers, pre_dispatch='all', batch_size=1, verbose=10 if dir_workers > 1 else 0)
+    evaluator = joblib.Parallel(n_jobs=dir_workers, pre_dispatch='all', batch_size=1, verbose=20)
     image_dir_results = evaluator(joblib.delayed(grid_score_image_dir)(base_dir, wells_per_dir, image_dpi, good_params, rescale, grid_workers, seed=i)
         for i, base_dir in enumerate(base_dirs))
     dir_lifespans, grid_lifespans_est = compute_lifespans(ref_lifespans, image_dir_results, workers)
