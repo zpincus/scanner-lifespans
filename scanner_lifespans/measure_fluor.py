@@ -1,55 +1,161 @@
 import numpy
-import scipy.ndimage as ndimage
-import freeimage
 import pathlib
+from concurrent import futures
+import collections
+import freeimage
+from scipy import ndimage
+import multiprocessing
 
 from zplib.image import mask
+from zplib.scalar_stats import mcd
+from zplib.image import polyfit
 
-def get_mask(image, low_pct, high_pct, max_hole_radius):
-    low_thresh, high_thresh = numpy.percentile(image, [low_pct, high_pct])
-    image_mask = mask.hysteresis_threshold(image, low_thresh, high_thresh)
-    image_mask = mask.fill_small_radius_holes(image_mask, max_hole_radius)
-    image_mask = mask.get_largest_object(image_mask)
-    return image_mask
+from . import find_worm
+from . import evaluate_wormfinding
+from .util import split_image_name
 
-def measure_intensity(image):
-    image_mask = get_mask(image, 99.2, 99.99, 12)
-    background = mask.get_background(image_mask, 15, 20)
-    background_value = numpy.percentile(image[background], 25)
-    pixel_data = image[image_mask] - background_value
-    return (image_mask.sum(), pixel_data.sum())+ tuple(numpy.percentile(pixel_data, [50, 95]))
+def find_bf_worm_masks(image_dir, max_workers=None):
+    if max_workers is None:
+        max_workers = multiprocessing.cpu_count() - 2
+    image_dir = pathlib.Path(image_dir)
+    executor = futures.ThreadPoolExecutor(max_workers=max_workers)
+    my_futures = []
+    for image_path in image_dir.glob('*brightfield.*'):
+        well, rest = split_image_name(image_path)
+        my_futures.append(executor.submit(_find_worms_task, image_path, well))
+    try:
+        executor.shutdown(wait=True)
+    except KeyboardInterrupt:
+        for future in my_futures:
+            future.cancel()
+        raise
 
-def measure_intensities(image_files):
-    all_values = []
-    for image_file in image_files:
-        print(str(image_file))
-        image = freeimage.read(image_file)
-        all_values.append(measure_intensity(image))
-    return all_values
+def evaluate_bf_worm_masks(image_dir):
+    from ris_widget import ris_widget
+    rw = ris_widget.RisWidget()
+    return evaluate_wormfinding.validate(image_dir, rw)
 
-def get_well_names(image_files):
-    wells = []
+def measure_worms_from_bf_mask(image_dir, max_workers=None):
+    if max_workers is None:
+        max_workers = multiprocessing.cpu_count() - 2
+
+    image_dir = pathlib.Path(image_dir)
+    valid_well_f = image_dir / 'valid_wells.txt'
+    if valid_well_f.exists():
+        with valid_well_f.open() as f:
+            valid_wells = {line.strip() for line in f}
+    else:
+        valid_wells = None
+    image_types = collections.defaultdict(list)
+    for image_path in image_dir.glob('*'):
+        if image_path.suffix not in ('.tif', '.tiff', '.png'):
+            continue
+        well, rest = split_image_name(image_path)
+        if rest != 'brightfield' and not rest.endswith('mask'):
+            if valid_wells is not None and well not in valid_wells:
+                continue
+            image_types[rest].append((well, image_path))
+    executor = futures.ThreadPoolExecutor(max_workers=max_workers)
+    for image_type, wells_and_paths in image_types.items():
+        wells_and_paths.sort() # sort by well order
+        my_futures = [executor.submit(_measure_worms_task, image_path, well) for well, image_path in wells_and_paths]
+        try:
+            futures.wait(my_futures)
+        except KeyboardInterrupt:
+            for future in my_futures:
+                future.cancel()
+            raise
+        data_rows = [future.result() for future in my_futures]
+        out = image_dir / 'measured_{}.csv'.format(image_type)
+        write_measures(data_rows, wells, image_dir.with_suffix('.csv'))
+    executor.shutdown()
+
+def measure_incyte_images(image_dir, image_glob='*FITC*'):
+    image_dir = pathlib.Path(image_dir)
+    assert image_dir.exists()
+    image_files = list(image_dir.glob(image_glob))
+    well_names = []
     for image_file in sorted(image_files):
         row = image_file.name[0] # first letter is row, then ' - ', then two-digit col
         col = image_file.name[4:6]
         well = row + col
-        wells.append(well)
-    return wells
+        well_names.append(well)
+    data_rows = []
+    for image_file in image_files:
+        print(str(image_file))
+        image = freeimage.read(image_file)
+        worm_mask = find_worm.find_worm_from_fluorescence(image)
+        data_rows.append(measure_fluorescence(image, worm_mask)[0])
 
-def write_intensities(all_values, wells, csv_out):
-    data_header = ['well', 'area', 'integrated', 'median', '95th']
+    write_measures(data_rows, well_names, image_dir.with_suffix('.csv'))
+
+#### Below are helper functions
+def _find_worms_task(image_path, well):
+    print('Finding worm '+well)
+    image = freeimage.read(image_path)
+    well_mask, edges, worm_mask = find_worm.find_worm_from_brightfield(image)
+    freeimage.write(well_mask.astype(numpy.uint8)*255, image_path.parent / (well + '_well_mask.png'))
+    freeimage.write(worm_mask.astype(numpy.uint8)*255, image_path.parent / (well + '_worm_mask.png'))
+
+def _measure_worms_task(image_path, well):
+    print('Measuring worm '+well)
+    image = freeimage.read(image_path)
+    well_mask = freeimage.read(image_path.parent / (well + '_well_mask.png')) > 0
+    worm_mask = freeimage.read(image_path.parent / (well + '_worm_mask.png')) > 0
+    return measure_fluorescence(image, worm_mask, well_mask)[0]
+
+data_row = collections.namedtuple('data_row',
+    ['area', 'integrated', 'median', 'percentile95',
+     'expression_area', 'expression_area_fraction', 'expression_mean',
+     'high_expression_area', 'high_expression_area_fraction',
+     'high_expression_mean', 'high_expression_integrated'])
+
+def measure_fluorescence(image, worm_mask, well_mask=None):
+    if well_mask is not None:
+        restricted_mask = ndimage.binary_erosion(well_mask, iterations=15)
+        background = polyfit.fit_polynomial(image[::4,::4], mask=restricted_mask[::4,::4], degree=2).astype(numpy.float32)
+        background = ndimage.zoom(background, 4)
+        background /= background[well_mask].mean()
+        background[background <= 0.01] = 1 # we're going to divide by background, so prevent div/0 errors
+        image = image.astype(numpy.float32) / background
+        image[~well_mask] = 0
+
+    worm_pixels = image[worm_mask]
+    low_px_mean, low_px_std = mcd.robust_mean_std(worm_pixels[worm_pixels < worm_pixels.mean()], 0.5)
+    expression_thresh = low_px_mean + 2.5*low_px_std
+    high_expression_thresh = low_px_mean + 6*low_px_std
+    fluo_px = worm_pixels > expression_thresh
+    high_fluo_px = worm_pixels > high_expression_thresh
+
+    area = worm_mask.sum()
+    integrated = worm_pixels.sum()
+    median, percentile95 = numpy.percentile(worm_pixels, [50, 95])
+    expression_area = fluo_px.size
+    expression_area_fraction = expression_area / area
+    expression_mean = fluo_px.mean()
+    high_expression_area = high_fluo_px.size
+    high_expression_area_fraction = high_expression_area / area
+    high_expression_mean = high_fluo_px.mean()
+    high_expression_integrated = high_fluo_px.sum()
+
+    expression_mask = (image > expression_thresh) & worm_mask
+    high_expression_mask = (image > high_expression_thresh) & worm_mask
+
+    return data_row(area, integrated, median, percentile95,
+     expression_area, expression_area_fraction, expression_mean,
+     high_expression_area, high_expression_area_fraction,
+     high_expression_mean, high_expression_integrated), (image, background, expression_mask, high_expression_mask)
+
+def write_intensities(data_rows, well_names, csv_out):
+    fields = data_rows[0]._fields
+    for data_row in data_rows:
+        assert data_row._fields == fields
+    data_header = ['well'] + list(fields)
     data = [data_header]
-    for well, values in zip(wells, all_values):
+    for well, values in zip(well_names, data_rows):
         data.append(map(str, [well] + list(values)))
     outdata = '\n'.join(','.join(row) for row in data)
     with open(csv_out, 'w') as f:
         f.write(outdata)
     return wells
 
-def measure_incyte_images(image_dir, image_glob='*FITC*'):
-    image_dir = pathlib.Path(image_dir)
-    assert image_dir.exists()
-    image_files = list(image_dir.glob(image_glob))
-    wells = get_well_names(image_files)
-    all_values = measure_intensities(image_files)
-    write_intensities(all_values, wells, image_dir.with_suffix('.csv'))

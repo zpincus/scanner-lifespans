@@ -112,8 +112,7 @@ class DeathDayEvaluator:
 
 
 class DOAEvaluator:
-    status_codes = ['One worm', 'No worms', 'Many worms', 'DOA']
-    def __init__(self, out_dir, date_for_images, well_names, statuses=None):
+    def __init__(self, out_dir, date_for_images, well_names, status_codes, statuses=None):
         self.rw = ris_widget.RisWidget()
         self.rw.qt_object.layer_table_dock_widget.hide()
         self.rw.qt_object.flipbook_dock_widget.hide()
@@ -122,6 +121,7 @@ class DOAEvaluator:
         self.out_dir = pathlib.Path(out_dir)
         self.well_names = well_names
         self.max_well_index = len(well_names)-1
+        self.status_codes = status_codes
         if statuses is None:
             self.statuses = [0] * len(well_names)
         else:
@@ -139,6 +139,8 @@ class DOAEvaluator:
     def save_status(self):
         util.dump(self.out_dir / 'statuses.pickle',
             statuses=self.statuses,
+            well_names=self.well_names,
+            status_codes=self.status_codes,
             well_index=self.well_index)
         status_out = [('well name', 'status')] + [(wn, self.status_codes[i]) for wn, i in zip(self.well_names, self.statuses)]
         util.dump_csv(status_out, self.out_dir/'evaluated_statuses.csv')
@@ -148,6 +150,8 @@ class DOAEvaluator:
 
     def load(self):
         data = util.load(self.out_dir / 'statuses.pickle')
+        assert self.status_codes == data.status_codes
+        assert self.well_names == data.well_names
         self.statuses = data.statuses
         self.well_index = data.well_index
         self.set_well(self.well_index)

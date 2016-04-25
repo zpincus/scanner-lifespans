@@ -11,9 +11,7 @@ from zplib import util
 from . import extract_wells
 from . import score_wells
 from . import estimate_lifespans
-
-ROW_NAMES_384 = 'ABCDEFGHIJKLMNOP'
-COL_NAMES_384 = ['{:02d}'.format(i) for i in range(1, 25)]
+from .util import ROW_NAMES_384, COL_NAMES_384
 
 HOLLY_NAME_PARAMS = dict(
     image_glob='*.tif',
@@ -37,22 +35,13 @@ HOLLY_IMAGE_SCORE_PARAMS = dict(
     erode_iters=1
 )
 
-HOLLY_IMAGE_SCORE_PARAMS_OPT_KS = dict(
+HOLLY_IMAGE_SCORE_PARAMS_new = dict(
     image_dpi=2400,
     min_feature=40, # in microns
-    max_feature=200, # in microns
-    high_thresh=8,
-    low_thresh=2,
-    erode_iters=1
-)
-
-HOLLY_IMAGE_SCORE_PARAMS_OPT_T = dict(
-    image_dpi=2400,
-    min_feature=None, # in microns
-    max_feature=200, # in microns
-    high_thresh=8,
-    low_thresh=4.5,
-    erode_iters=1
+    max_feature=125, # in microns
+    high_thresh=2.75,
+    low_thresh=None,
+    erode_iters=2
 )
 
 
@@ -133,8 +122,10 @@ def calculate_lifespans(scored_dir, training_data):
     scored_dir = pathlib.Path(scored_dir)
     data = load_data(scored_dir)
     training = load_training_data(training_data)
-
-    states = estimate_lifespans.estimate_lifespans(data.scores, data.ages, training.states, training.scores, training.ages)
+    states = estimate_lifespans.simple_hmm(data.scores, data.ages,
+        training.lifespans, training.ages, training.scores, training.states,
+        lifespan_sigma=6)[0]
+    # states = estimate_lifespans.estimate_lifespans(data.scores, data.ages, training.states, training.scores, training.ages)
     lifespans = estimate_lifespans.states_to_lifespans(states, data.ages)
     last_alive_indices = estimate_lifespans.states_to_last_alive_indices(states)
     lifespans_out = [('well name', 'lifespan')]+[(well_name, str(lifespan)) for well_name, lifespan in zip(data.well_names, lifespans)]
@@ -181,7 +172,8 @@ def evaluate_statuses(extracted_dir):
     else:
         well_names = data.well_names
         statuses = None
-    evaluator = evaluate_lifespans.DOAEvaluator(scored_dir, data.dates[0].isoformat(), well_names, statuses)
+    evaluator = evaluate_lifespans.DOAEvaluator(scored_dir, data.dates[0].isoformat(), well_names,
+        status_codes=['One worm', 'No worms', 'Many worms', 'DOA'], statuses=statuses)
     return evaluator
 
 
@@ -207,7 +199,7 @@ def make_training_data(scored_dir, training_data, annotation_file=None):
         annotation_file = pathlib.Path(scored_dir) / 'evaluated_lifespans.csv'
     csv_well_names, csv_lifespans = read_lifespan_annotation_csv(annotation_file)
     good_well_names, good_lifespans = [], []
-    if hasattr(data, 'statuses'):
+    if hasattr(data, 'eval_well_statuses'):
         statuses = dict(zip(data.well_names, data.eval_well_statuses))
     else:
         statuses = {}
@@ -427,7 +419,7 @@ def aggregate_scores(out_dir):
 def load_training_data(training_data_files):
     """Load data from one or more training data files. If multiple files are provided,
     merge their data."""
-    states, scores, ages = [], [], []
+    states, scores, ages, lifespans = [], [], [], []
     if isinstance(training_data_files, (str, pathlib.Path)):
         training_data_files = [training_data_files]
     for training_data in training_data_files:
@@ -436,9 +428,11 @@ def load_training_data(training_data_files):
         # training.ages is n_timepoints long. We want to flatten both into lists
         states.extend(training.states.flat)
         scores.extend(training.scores.flat)
-        ages.extend(list(ages) * training.states.shape[0])
+        ages.extend(list(training.ages) * training.states.shape[0])
+        training_lifespans = estimate_lifespans.states_to_lifespans(training.states, training.ages)
+        lifespans.extend(estimate_lifespans.cleanup_lifespans(training_lifespans, training.ages))
     training_out = util.Data(states=numpy.array(states), scores=numpy.array(scores),
-        ages=numpy.array(ages))
+        ages=numpy.array(ages), lifespans=numpy.array(lifespans))
     return training_out
 
 def load_data(scored_dir):
@@ -477,7 +471,15 @@ def load_data(scored_dir):
     status_data = scored_dir / 'statuses.pickle'
     if status_data.exists():
         statuses = util.load(status_data)
-        data.eval_well_statuses = statuses.statuses
+        status_codes = [statuses.status_codes[i] for i in statuses.statuses]
+        status_dict = dict(zip(statuses.well_names, status_codes))
+        all_statuses = []
+        for well_name in data.well_names:
+            if well_name in status_dict:
+                all_statuses.append(status_dict[well_name])
+            else:
+                all_statuses.append(statuses.status_codes[0])
+        data.eval_well_statuses = all_statuses
     return data
 
 def read_lifespan_annotation_csv(csv):

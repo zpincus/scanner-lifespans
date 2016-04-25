@@ -68,9 +68,9 @@ def find_edges(image, approx_edge_locations=None, corner_fraction=0.3, search_fr
         left = top = 0
     else:
         left, right, top, bottom = approx_edge_locations
-    lr_strip = _get_image_slice(image, left, right, corner_fraction, axis=0)
+    lr_strip = _get_image_slice(image, top, bottom, corner_fraction, axis=0)
     left, right, lr_profile, lr_gradient, lr_indices = _find_edges_1d(lr_strip, left, right, search_fraction)
-    tb_strip = _get_image_slice(image, top, bottom, corner_fraction, axis=1)
+    tb_strip = _get_image_slice(image, left, right, corner_fraction, axis=1)
     top, bottom, tb_profile, tb_gradient, tb_indices = _find_edges_1d(tb_strip, top, bottom, search_fraction)
     return WellEdges(left, right, top, bottom, lr_profile, lr_gradient, lr_indices, tb_profile, tb_gradient, tb_indices)
 
@@ -121,10 +121,9 @@ def _get_image_slice(image, low, high, corner_fraction, axis):
     full_width = high-low
     exclude = int(round(full_width * corner_fraction))
     image_strip = image[:, low+exclude:high-exclude]
-    return image_strip
+    return image_strip.mean(axis=1)
 
-def _find_edges_1d(image, low_est, high_est, search_fraction):
-    profile = image.mean(axis=1)
+def _find_edges_1d(profile, low_est, high_est, search_fraction):
     indices = numpy.arange(len(profile))
     gradient = numpy.gradient(profile)
     search_radius = int(round(search_fraction * len(profile)))
