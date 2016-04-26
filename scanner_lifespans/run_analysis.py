@@ -3,7 +3,6 @@ import pathlib
 import re
 import datetime
 import collections
-from concurrent import futures
 
 import freeimage
 from zplib import util
@@ -11,7 +10,7 @@ from zplib import util
 from . import extract_wells
 from . import score_wells
 from . import estimate_lifespans
-from .util import ROW_NAMES_384, COL_NAMES_384
+from .util import ROW_NAMES_384, COL_NAMES_384, BackgroundRunner
 
 HOLLY_NAME_PARAMS = dict(
     image_glob='*.tif',
@@ -101,12 +100,10 @@ def process_image_dir(in_dir, out_dir, age_at_first_scan, name_params, plate_par
         image_files = image_sets[date]
         runner.submit(process_image_set, image_files, out_dir_for_date, date, age,
             plate_params, score_params, re_extract, re_score)
-    errors = runner.wait()
-    for i, error in enumerate(errors):
-        if error is not None:
-            print("Error processing images for date {}:".format(dates[i]))
-            print(error)
-    was_error = any(errors)
+    results, was_error, error_indices, cancelled_indices = runner.wait()
+    for i in error_indices:
+        print("Error processing images for date {}:".format(dates[i]))
+        print(results[i])
     if not was_error:
         aggregate_scores(out_dir)
     return was_error
@@ -270,55 +267,6 @@ def make_well_mask(out_dir, image_file, ignore_previous=False):
             image = (image >> 8).astype(numpy.uint8)
         well_mask = extract_wells.get_well_mask(image)
         freeimage.write((well_mask * 255).astype(numpy.uint8), str(well_mask_f))
-
-class BackgroundRunner:
-    """Class for running jobs in background processes. Does not collect
-    the return value of the jobs! Use submit() to add jobs, and then
-    wait() to get a list of the error states for each submitted job:
-    either None for successful completion, or an exception object.
-
-    Wait() will only wait until the first exception, and after that will
-    attempt to cancel all pending jobs.
-
-    If max_workers is 1, then just run the job in this process. Useful
-    for debugging, where a proper traceback from a foreground exception
-    can be helpful.
-    """
-    def __init__(self, max_workers):
-        if max_workers == 1:
-            self.executor = None
-        else:
-            self.executor = futures.ProcessPoolExecutor(max_workers)
-        self.futures = []
-
-    def submit(self, fn, *args, **kwargs):
-        if self.executor:
-            self.futures.append(self.executor.submit(fn, *args, **kwargs))
-        else:
-            fn(*args, **kwargs)
-
-    def wait(self):
-        if not self.executor:
-            return []
-        try:
-            futures.wait(self.futures, return_when=futures.FIRST_EXCEPTION)
-        except KeyboardInterrupt:
-            for future in self.futures:
-                future.cancel()
-
-        # If there was an exception, cancel all the rest of the jobs.
-        # If there was no exception, can "cancel" the jobs anyway, because canceling does
-        # nothing if the job is done.
-        for future in self.futures:
-            future.cancel()
-        errors = []
-        for future in self.futures:
-            if future.cancelled():
-                errors.append(None)
-            else:
-                errors.append(future.exception())
-        self.futures = []
-        return errors
 
 def process_image_set(image_files, out_dir, date, age, plate_params, score_params, re_extract, re_score):
     """Do all processing for a given date's images: extract the wells to

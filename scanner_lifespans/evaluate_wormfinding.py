@@ -57,14 +57,18 @@ class ValidAnnotator(Qt.QWidget):
         self.edit = Qt.QPushButton("Edit Mask")
         self.editing = False
         layout.addRow(self.edit)
+        self.rw.flipbook.layout().addWidget(self)
+
         self.current_page = None
         self.old_well = None
+
+        valid_well_f = self.image_dir / 'valid_wells.txt'
+        with valid_well_f.open() as f:
+            self.valid_wells = {line.strip() for line in f}
 
         self.valid.stateChanged.connect(self._on_valid_state_changed)
         self.rw.flipbook.pages_view.selectionModel().currentRowChanged.connect(self._on_page_change)
         self.edit.clicked.connect(self._on_edit_clicked)
-        self.validators = []
-        self.rw.flipbook_pages.inserted.connect(self.assay_validity)
         self._on_page_change()
 
     def disconnect(self):
@@ -75,19 +79,23 @@ class ValidAnnotator(Qt.QWidget):
     def _on_page_change(self):
         if self.current_page is not None:
             self.current_page.inserted.disconnect(self._on_page_change)
-            if self.editing:
-                self.stop_editing()
-                self.current_page[2].set(data=self.worm_mask)
+            if self.old_well is not None:
+                # if we were previously looking at a non-empty list of images
+                if self.editing:
+                    self.stop_editing()
+                else:
+                    self.current_page[2].set(data=self.worm_mask)
         self.current_page = self.rw.flipbook.focused_page
         if self.current_page is None:
             return
         self.current_page.inserted.connect(self._on_page_change)
         if len(self.current_page) == 0:
+            self.old_well = None
             return
         self.current_page[1].set(data=self.current_page[1].data.astype(bool))
         self.current_page[2].set(data=self.current_page[2].data.astype(bool))
         self.well = self.current_page.name
-        valid = self.current_page.valid
+        valid = self.well in self.valid_wells
         self.valid.setChecked(valid)
         # below will write twice if the above changes the state. Who cares?
         self._on_valid_state_changed(valid)
@@ -96,10 +104,14 @@ class ValidAnnotator(Qt.QWidget):
         self.old_well = self.well
 
     def _on_valid_state_changed(self, valid):
-        self.current_page.valid = valid
-        valid_wells = [page.name for page in self.rw.flipbook.pages if getattr(page, 'valid', False)]
+        if valid:
+            self.rw.layers[0].tint = (1.0, 1.0, 1.0, 1.0)
+            self.valid_wells.add(self.well)
+        else:
+            self.rw.layers[0].tint = (1.0, 0.9, 0, 1.0)
+            self.valid_wells.discard(self.well)
         with (self.image_dir / 'valid_wells.txt').open('w') as f:
-            f.write('\n'.join(valid_wells))
+            f.write('\n'.join(sorted(self.valid_wells)))
 
     def _on_edit_clicked(self):
         if self.editing:
@@ -111,6 +123,7 @@ class ValidAnnotator(Qt.QWidget):
         self.editing = False
         self.edit.setText('Edit Mask')
         self.rw.qt_object.layer_stack_painter_dock_widget.hide()
+        self.rw.layers[2].opacity = 1
         self.rw.layers[3].visible = True
         self.rw.layers[4].visible = True
         self.outline_mask()
@@ -131,29 +144,13 @@ class ValidAnnotator(Qt.QWidget):
         sm = self.rw.qt_object.layer_stack._selection_model
         m = sm.model()
         sm.setCurrentIndex(m.index(2, 0), Qt.QItemSelectionModel.SelectCurrent | Qt.QItemSelectionModel.Rows)
-
         self.edit.setText('Save Edits')
+        self.rw.layers[2].opacity = 0.5
         self.rw.layers[3].visible = False
         self.rw.layers[4].visible = False
         self.current_page[2].set(self.worm_mask)
         self.rw.qt_object.layer_stack_painter_dock_widget.show()
-
-    def assay_validity(self, insertion_point, inserted_pages):
-        for page in inserted_pages:
-            if not hasattr(page, 'valid'):
-                self.validators.append(Validator(page))
-
-
-class Validator(Qt.QObject):
-    def __init__(self, image_list, parent=None):
-        super().__init__(parent)
-        self.image_list = image_list
-        self.image_list.inserted.connect(self._on_inserted)
-
-    def _on_inserted(self, insertion_point, inserted_images):
-        self.image_list.valid = self.image_list[2].data.sum() > 0
-        self.image_list.inserted.disconnect(self._on_inserted)
-
+        self.rw.qt_object.layer_stack_painter.brush_size_lse.value = 13
 
 _layer_props = """{
      "layer property stack": [
