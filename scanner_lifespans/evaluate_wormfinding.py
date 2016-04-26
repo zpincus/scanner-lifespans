@@ -70,11 +70,17 @@ class ValidAnnotator(Qt.QWidget):
         self.rw.flipbook.pages_view.selectionModel().currentRowChanged.connect(self._on_page_change)
         self.edit.clicked.connect(self._on_edit_clicked)
         self._on_page_change()
+        self.valid_action = Qt.QAction('toggle_valid', self.rw.qt_object)
+        self.valid_action.setShortcut(Qt.Qt.Key_V)
+        self.rw.qt_object.addAction(self.valid_action)
+        self.valid_action.triggered.connect(self.valid.toggle)
+
 
     def disconnect(self):
         self.valid.stateChanged.disconnect(self._on_valid_state_changed)
         self.rw.flipbook.pages_view.selectionModel().currentRowChanged.disconnect(self._on_page_change)
         self.edit.clicked.disconnect(self._on_edit_clicked)
+        self.rw.qt_object.removeAction(self.valid_action)
 
     def _on_page_change(self):
         if self.current_page is not None:
