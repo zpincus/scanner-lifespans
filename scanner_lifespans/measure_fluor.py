@@ -17,7 +17,7 @@ def find_bf_worm_masks(image_dir, max_workers=None):
     image_dir = pathlib.Path(image_dir)
     runner = BackgroundRunner(max_workers)
     wells = []
-    for image_path in image_dir.glob('*brightfield.*'):
+    for image_path in sorted(image_dir.glob('*brightfield.*')):
         well, rest = split_image_name(image_path)
         wells.append(well)
         runner.submit(_find_worms_task, image_path, well)
